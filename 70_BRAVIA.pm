@@ -228,7 +228,7 @@ sub BRAVIA_Set($@) {
     $usage .= ":noArg"
         if (defined($hash->{READINGS}{requestFormat}{VAL}) &&
             $hash->{READINGS}{requestFormat}{VAL} eq "xml");
-    $usage .= " statusRequest:noArg toggle:noArg on:noArg off:noArg play:noArg pause:noArg stop:noArg record:noArg upnp:on,off volume:slider,1,1,100 volumeUp:noArg volumeDown:noArg channelUp:noArg channelDown:noArg remoteControl";
+    $usage .= " statusRequest:noArg toggle:noArg on:noArg off:noArg tvpause:noarg play:noArg pause:noArg stop:noArg record:noArg upnp:on,off volume:slider,1,1,100 volumeUp:noArg volumeDown:noArg channelUp:noArg channelDown:noArg remoteControl";
     $usage .= " mute:" . $mutes;
     $usage .= " input:" . $inputs_txt if ( $inputs_txt ne "" );
     $usage .= " channel:$channels" if ( $channels ne "" );
@@ -522,15 +522,39 @@ sub BRAVIA_Set($@) {
         }
     }
 
-    # play / pause
-    elsif ( $a[1] =~ /^(play|pause)$/ ) {
+    # tvpause
+    elsif ( $a[1] eq "tvpause" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
         if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            BRAVIA_SendCommand( $hash, "ircc", "PLAYPAUSE" );
+            BRAVIA_SendCommand( $hash, "ircc", "TVPAUSE" );
         }
         else {
-            return "Device needs to be ON to play or pause video.";
+            return "Device needs to be ON to pause tv.";
+        }
+    }
+
+    # pause
+    elsif ( $a[1] eq "pause" ) {
+        Log3 $name, 2, "BRAVIA set $name " . $a[1];
+
+        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+            BRAVIA_SendCommand( $hash, "ircc", "PAUSE" );
+        }
+        else {
+            return "Device needs to be ON to pause video.";
+        }
+    }
+
+    # play
+    elsif ( $a[1] eq "play" ) {
+        Log3 $name, 2, "BRAVIA set $name " . $a[1];
+
+        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+            BRAVIA_SendCommand( $hash, "ircc", "PLAY" );
+        }
+        else {
+            return "Device needs to be ON to play video.";
         }
     }
 
