@@ -1136,7 +1136,12 @@ sub BRAVIA_ReceiveCommand($$$) {
   
           # read content information
           if ( defined($hash->{READINGS}{generation}{VAL}) && $hash->{READINGS}{generation}{VAL} ne "1.0" ) {
-            BRAVIA_SendCommand( $hash, "getContentInformation" );
+            if (ref $return eq ref {} && ref($return->{result}) eq "ARRAY" && $return->{result}[0]{status} ne "active") {
+              # current status is not active, don't need to fetch content information
+              $newstate = "off";              
+            } else {
+              BRAVIA_SendCommand( $hash, "getContentInformation" );
+            }
           } elsif (ref $return eq ref {}) {
             if (ref($return->{result}) eq "ARRAY") {
               $newstate = ( $return->{result}[0]{status} eq "active" ? "on" : $return->{result}[0]{status} );
