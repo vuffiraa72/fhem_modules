@@ -864,14 +864,8 @@ sub BRAVIA_ReceiveCommand($$$) {
     my $name    = $hash->{NAME};
     my $service = $param->{service};
     my $cmd     = $param->{cmd};
-    my $header  = $param->{httpheader};
 
-    my $state =
-      ( $hash->{READINGS}{state}{VAL} )
-      ? $hash->{READINGS}{state}{VAL}
-      : "";
     my $newstate;
-    my $type = ( $param->{type} ) ? $param->{type} : "";
     my $rc = ( $param->{buf} ) ? $param->{buf} : $param;
     my $return;
     
@@ -898,6 +892,7 @@ sub BRAVIA_ReceiveCommand($$$) {
         # device is not reachable or
         # does not even support master command for status
         if ( $service eq "getStatus" ) {
+            BRAVIA_ClearContentInformation($hash);
             $newstate = "absent";
 
             if (
@@ -1043,264 +1038,7 @@ sub BRAVIA_ReceiveCommand($$$) {
             }
         }
 
-        #######################
-        # process return data
-        #
-
-        # ircc
-        if ( $service eq "ircc" ) {
-            if ( ref($return) ne "HASH" && $return eq "ok" ) {
-
-                # toggle standby
-                if ( defined($type) && $type eq "off" ) {
-                    $newstate = "off";
-                }
-
-                # toggle standby
-                elsif ( defined($type) && $type eq "on" ) {
-                    $newstate = "on";
-                }
-
-            }
-        }
-        
-        # upnp
-        elsif ( $service eq "upnp" ) {
-          if ( ref($return) eq "HASH" ) {
-            if ( $cmd eq "getVolume" ) {
-              my $volume = $return->{"s:Body"}{"u:GetVolumeResponse"}{CurrentVolume};
-              if ( defined( $volume ) ) {
-                readingsBulkUpdate( $hash, "volume", $volume )
-                    if (!defined($hash->{READINGS}{volume}{VAL}) || $hash->{READINGS}{volume}{VAL} ne $volume);
-              }
-            } elsif ( $cmd eq "getMute" ) {
-              my $mute = $return->{"s:Body"}{"u:GetMuteResponse"}{CurrentMute} eq "0" ? "off" : "on";
-              if ( defined( $mute ) ) {
-                readingsBulkUpdate( $hash, "mute", $mute )
-                    if (!defined($hash->{READINGS}{mute}{VAL}) || $hash->{READINGS}{mute}{VAL} ne $mute);
-              }
-            }
-          }
-        }
-        
-        # getStatus
-        elsif ( $service eq "getStatus" ) {
-          my $input = "-";
-          my $setInput;
-
-          my %statusKeys;
-          foreach ( keys %{ $hash->{READINGS} } ) {
-            $statusKeys{$_} = 1 if ( $_ =~ /^s_.*/ && $hash->{READINGS}{$_}{VAL} ne "-" );
-          }
-          if ( ref($return) eq "HASH" ) {
-            if ( ref($return->{status}{statusItem}) eq "ARRAY" ) {
-              foreach ( @{ $return->{status}{statusItem} } ) {
-                if ( $_->{field} eq "source" ) {
-                  $input = $_->{value};
-                  $setInput = "true";
-                } else {
-                  readingsBulkUpdate( $hash, "s_".$_->{field}, $_->{value} )
-                      if ( !defined( $hash->{READINGS}{"s_".$_->{field}}{VAL} ) or $hash->{READINGS}{"s_".$_->{field}}{VAL} ne $_->{value} );
-                }
-                delete $statusKeys{"s_".$_->{field}};
-              }
-            } elsif (defined($return->{status}{statusItem}{field})) {
-              my $field = "s_".$return->{status}{statusItem}{field};
-              if ( defined($field) && $field ne "" ) {
-                if ( $field eq "s_source" ) {
-                  $input = $return->{status}{statusItem}{value};
-                  $setInput = "true";
-                } else {
-                  readingsBulkUpdate( $hash, $field, $return->{status}{statusItem}{value} )
-                      if ( !defined( $hash->{READINGS}{$field}{VAL} ) or $hash->{READINGS}{$field}{VAL} ne $return->{status}{statusItem}{value} );
-                }
-                delete $statusKeys{$field};
-              }
-            }
-          }
-
-          readingsBulkUpdate( $hash, "input", $input )
-              if ( defined($setInput) and
-                  (!defined( $hash->{READINGS}{input}{VAL} ) or $hash->{READINGS}{input}{VAL} ne $input) );
-
-          #remove outdated content information - replaces by "-"
-          foreach ( keys %statusKeys ) {
-            readingsBulkUpdate( $hash, $_, "-" );
-          }
-
-          # fetch other info
-
-          # read system information if not existing
-          BRAVIA_SendCommand( $hash, "getSystemInformation" )
-              if ( !defined( $hash->{READINGS}{name}{VAL} ) or $hash->{READINGS}{name}{VAL} eq "0" );
-  
-          # read content information
-          if ( defined($hash->{READINGS}{generation}{VAL}) && $hash->{READINGS}{generation}{VAL} ne "1.0" ) {
-            if (ref $return eq ref {} && ref($return->{result}) eq "ARRAY" && $return->{result}[0]{status} ne "active") {
-              # current status is not active, don't need to fetch content information
-              $newstate = "off";              
-            } else {
-              BRAVIA_SendCommand( $hash, "getContentInformation" );
-            }
-          } elsif (ref $return eq ref {}) {
-            if (ref($return->{result}) eq "ARRAY") {
-              $newstate = ( $return->{result}[0]{status} eq "active" ? "on" : $return->{result}[0]{status} );
-            } else {
-              $newstate = ( $return->{status}{name} eq "viewing" ? "on" : $return->{status}{name} );
-            }
-            # get current system settings
-            if ($newstate eq "on" && (!defined($hash->{READINGS}{upnp}{VAL}) || $hash->{READINGS}{upnp}{VAL} eq "on")) {
-              BRAVIA_SendCommand( $hash, "upnp", "getVolume" );
-              BRAVIA_SendCommand( $hash, "upnp", "getMute" );
-            }
-          }
-        }
-
-        # getSystemInformation
-        elsif ( $service eq "getSystemInformation" ) {
-          if ( ref($return) eq "HASH" ) {
-            if (ref($return->{result}) eq "ARRAY") {
-              my $sysInfo = $return->{result}[0];
-              readingsBulkUpdate( $hash, "name", $sysInfo->{name} );
-              readingsBulkUpdate( $hash, "generation", $sysInfo->{generation} );
-              readingsBulkUpdate( $hash, "area", $sysInfo->{area} );
-              readingsBulkUpdate( $hash, "language", $sysInfo->{language} );
-              readingsBulkUpdate( $hash, "country", $sysInfo->{region} );
-              readingsBulkUpdate( $hash, "modelName", $sysInfo->{model} );
-              $hash->{name} = $sysInfo->{name};
-              $hash->{modelName} = $sysInfo->{model};
-              $hash->{generation} = $sysInfo->{generation};
-            } else {
-              readingsBulkUpdate( $hash, "name", $return->{name} );
-              readingsBulkUpdate( $hash, "generation", $return->{generation} );
-              readingsBulkUpdate( $hash, "area", $return->{area} );
-              readingsBulkUpdate( $hash, "language", $return->{language} );
-              readingsBulkUpdate( $hash, "country", $return->{country} );
-              readingsBulkUpdate( $hash, "modelName", $return->{modelName} );
-              $hash->{name} = $return->{name};
-              $hash->{modelName} = $return->{modelName};
-              $hash->{generation} = $return->{generation};
-            }
-          }
-        }
-
-        # getContentInformation
-        elsif ( $service eq "getContentInformation" ) {
-          my %contentKeys;
-          my $channelName = "-";
-          my $channelNo = "-";
-          my $currentTitle = "-";
-          my $currentMedia = "-";
-          foreach ( keys %{ $hash->{READINGS} } ) {
-            $contentKeys{$_} = 1
-                if ( $_ =~ /^ci_.*/ and ( !defined( $hash->{READINGS}{$_}{VAL} ) or $hash->{READINGS}{$_}{VAL} ne "-" ) );
-          }
-          if ( ref($return) eq "HASH" ) {
-            $newstate = "on";
-            if ( defined($return->{infoItem}) ) {
-              # xml
-              if ( ref($return->{infoItem}) eq "ARRAY" ) {
-                foreach ( @{ $return->{infoItem} } ) {
-                  if ( $_->{field} eq "displayNumber" ) {
-                    $channelNo = $_->{value};
-                  } elsif ( $_->{field} eq "inputType" ) {
-                    $currentMedia = $_->{value};
-                  } elsif ( $_->{field} eq "serviceName" ) {
-                    $channelName = $_->{value};
-                    $channelName =~ s/^\s+//;
-                    $channelName =~ s/\s+$//;
-                    $channelName =~ s/\s/_/g;
-                    $channelName =~ s/,/./g;
-                  } elsif ( $_->{field} eq "title" ) {
-                    $currentTitle = Encode::decode_utf8($_->{value});
-                  } else {
-                    readingsBulkUpdate( $hash, "ci_".$_->{field}, $_->{value} )
-                        if ( !defined( $hash->{READINGS}{"ci_".$_->{field}}{VAL} ) or $hash->{READINGS}{"ci_".$_->{field}}{VAL} ne $_->{value} );
-                    delete $contentKeys{"ci_".$_->{field}};
-                  }
-                }
-              } else {
-                my $field = "ci_".$return->{infoItem}->{field};
-                my $value = $return->{infoItem}->{value};
-                readingsBulkUpdate( $hash, $field, $value )
-                    if ( !defined( $hash->{READINGS}{$field}{VAL}) or $hash->{READINGS}{$field}{VAL} ne $value );
-                delete $contentKeys{$field};
-              }
-            } else {
-              # json
-              if ( ref($return->{result}[0]) eq "HASH" ) {
-                foreach ( keys %{$return->{result}[0]} ) {
-                  if ( $_ eq "dispNum" ) {
-                    $channelNo = $return->{result}[0]{$_};
-                  } elsif ( $_ eq "programMediaType" ) {
-                    $currentMedia = $return->{result}[0]{$_};
-                  } elsif ( $_ eq "title" ) {
-                    $channelName = $return->{result}[0]{$_};
-                    $channelName =~ s/^\s+//;
-                    $channelName =~ s/\s+$//;
-                    $channelName =~ s/\s/_/g;
-                    $channelName =~ s/,/./g;
-                  } elsif ( $_ eq "programTitle" ) {
-                    $currentTitle = Encode::decode_utf8($return->{result}[0]{$_});
-                  } elsif ( $_ eq "source" ) {
-                    readingsBulkUpdate( $hash, "input", $return->{result}[0]{$_} )
-                        if ( !defined( $hash->{READINGS}{input}{VAL} ) or $hash->{READINGS}{input}{VAL} ne $return->{result}[0]{$_} );
-                  } else {
-                    readingsBulkUpdate( $hash, "ci_".$_, $return->{result}[0]{$_} )
-                        if ( !defined( $hash->{READINGS}{"ci_".$_}{VAL} ) or $hash->{READINGS}{"ci_".$_}{VAL} ne $return->{result}[0]{$_} );
-                    delete $contentKeys{"ci_".$_};
-                  }
-                }
-              }
-            }
-          } else {
-            if ( $hash->{READINGS}{input}{VAL} eq "Others" || $hash->{READINGS}{input}{VAL} eq "Broadcast" ) {
-              $newstate = "off";
-            } else {
-              $newstate = "on";
-            }
-          }
-          readingsBulkUpdate( $hash, "channel", $channelName )
-              if ( !defined( $hash->{READINGS}{channel}{VAL} ) or $hash->{READINGS}{channel}{VAL} ne $channelName );
-          readingsBulkUpdate( $hash, "channelId", $channelNo )
-              if ( !defined( $hash->{READINGS}{channelId}{VAL} ) or $hash->{READINGS}{channelId}{VAL} ne $channelNo );
-          readingsBulkUpdate( $hash, "currentTitle", $currentTitle )
-              if ( !defined( $hash->{READINGS}{currentTitle}{VAL} ) or $hash->{READINGS}{currentTitle}{VAL} ne $currentTitle );
-          readingsBulkUpdate( $hash, "currentMedia", $currentMedia )
-              if ( !defined( $hash->{READINGS}{currentMedia}{VAL} ) or $hash->{READINGS}{currentMedia}{VAL} ne $currentMedia );
-
-          if ($channelName ne "-" && $channelNo ne "-") {
-            $hash->{helper}{device}{channelPreset}{ $channelNo }{id} = $channelNo;
-            $hash->{helper}{device}{channelPreset}{ $channelNo }{name} = $channelName;
-          }
-
-          #remove outdated content information - replaces by "-"
-          foreach ( keys %contentKeys ) {
-            readingsBulkUpdate( $hash, $_, "-" );
-          }
-
-          # get current system settings
-          if ($newstate eq "on" && (!defined($hash->{READINGS}{upnp}{VAL}) || $hash->{READINGS}{upnp}{VAL} eq "on")) {
-            BRAVIA_SendCommand( $hash, "upnp", "getVolume" );
-            BRAVIA_SendCommand( $hash, "upnp", "getMute" );
-          }
-        }
-
-        # register
-        elsif ( $service eq "register" ) {
-          if ( $header =~ /auth=([a-z0-9]+)/ ) {
-            readingsBulkUpdate( $hash, "authCookie", $1 );
-          }
-          if ( $header =~ /expires=\w{3}, (\d{2}-\w{3}-\d{4} [0-2]\d:[0-5]\d:[0-5]\d)/ ) {
-            readingsBulkUpdate( $hash, "authExpires", $1 );
-          }
-        }
-
-        # all other command results
-        else {
-            Log3 $name, 2,
-"BRAVIA $name: ERROR: method to handle response of $service not implemented";
-        }
+        $newstate = BRAVIA_ProcessCommandData( $param, $return );
     }
 
     if ( defined( $newstate ) ) {
@@ -1384,6 +1122,311 @@ sub BRAVIA_wake ($$) {
 
     return;
 }
+
+###################################
+# process return data
+sub BRAVIA_ProcessCommandData ($$) {
+
+    my ($param, $return) = @_;
+    my $hash    = $param->{hash};
+    my $name    = $hash->{NAME};
+    my $service = $param->{service};
+    my $cmd     = $param->{cmd};
+    my $type    = ( $param->{type} ) ? $param->{type} : "";
+    my $header  = $param->{httpheader};
+    my $newstate;
+  
+    # ircc
+    if ( $service eq "ircc" ) {
+        if ( ref($return) ne "HASH" && $return eq "ok" ) {
+    
+            # toggle standby
+            if ( defined($type) && $type eq "off" ) {
+                $newstate = "off";
+            }
+    
+            # toggle standby
+            elsif ( defined($type) && $type eq "on" ) {
+                $newstate = "on";
+            }
+    
+        }
+    }
+    
+    # upnp
+    elsif ( $service eq "upnp" ) {
+      if ( ref($return) eq "HASH" ) {
+        if ( $cmd eq "getVolume" ) {
+          my $volume = $return->{"s:Body"}{"u:GetVolumeResponse"}{CurrentVolume};
+          if ( defined( $volume ) ) {
+            readingsBulkUpdate( $hash, "volume", $volume )
+                if (ReadingsVal($name, "volume", "-1") ne $volume);
+          }
+        } elsif ( $cmd eq "getMute" ) {
+          my $mute = $return->{"s:Body"}{"u:GetMuteResponse"}{CurrentMute} eq "0" ? "off" : "on";
+          if ( defined( $mute ) ) {
+            readingsBulkUpdate( $hash, "mute", $mute )
+                if (ReadingsVal($name, "mute", "-1") ne $mute);
+          }
+        }
+      }
+    }
+    
+    # getStatus
+    elsif ( $service eq "getStatus" ) {
+      my $input = "-";
+      my $setInput;
+    
+      my %statusKeys;
+      foreach ( keys %{ $hash->{READINGS} } ) {
+        $statusKeys{$_} = 1 if ( $_ =~ /^s_.*/ && ReadingsVal($name, $_, "") ne "-" );
+      }
+      if ( ref($return) eq "HASH" ) {
+        if ( ref($return->{status}{statusItem}) eq "ARRAY" ) {
+          foreach ( @{ $return->{status}{statusItem} } ) {
+            if ( $_->{field} eq "source" ) {
+              $input = $_->{value};
+              $setInput = "true";
+            } else {
+              readingsBulkUpdate( $hash, "s_".$_->{field}, $_->{value} )
+                  if (ReadingsVal($name, "s_".$_->{field}, "") ne $_->{value} );
+            }
+            delete $statusKeys{"s_".$_->{field}};
+          }
+        } elsif (defined($return->{status}{statusItem}{field})) {
+          my $field = "s_".$return->{status}{statusItem}{field};
+          if ( defined($field) && $field ne "" ) {
+            if ( $field eq "s_source" ) {
+              $input = $return->{status}{statusItem}{value};
+              $setInput = "true";
+            } else {
+              readingsBulkUpdate( $hash, $field, $return->{status}{statusItem}{value} )
+                  if (ReadingsVal($name, $field, "") ne $return->{status}{statusItem}{value} );
+            }
+            delete $statusKeys{$field};
+          }
+        }
+      }
+    
+      readingsBulkUpdate( $hash, "input", $input )
+          if ( defined($setInput) and
+              (ReadingsVal($name, "input", "") ne $input) );
+    
+      #remove outdated content information - replaces by "-"
+      foreach ( keys %statusKeys ) {
+        readingsBulkUpdate( $hash, $_, "-" );
+      }
+      
+      # check for valid status
+      if (ref $return eq ref {} && ref($return->{error}) eq "ARRAY" && $return->{error}[0] eq "404") {
+        BRAVIA_ClearContentInformation($hash);
+        return "off";
+      }
+  
+    
+      # fetch other info
+    
+      # read system information if not existing
+      BRAVIA_SendCommand( $hash, "getSystemInformation" )
+          if ( ReadingsVal($name, "name", "0") eq "0" );
+    
+      # read content information
+      if ( ReadingsVal($name, "generation", "1.0") ne "1.0" ) {
+        if (ref $return eq ref {} && ref($return->{result}) eq "ARRAY" && $return->{result}[0]{status} ne "active") {
+          # current status is not active, don't need to fetch content information
+          BRAVIA_ClearContentInformation($hash);
+          $newstate = "off";              
+        } else {
+          BRAVIA_SendCommand( $hash, "getContentInformation" );
+        }
+      } elsif (ref $return eq ref {}) {
+        if (ref($return->{result}) eq "ARRAY") {
+          $newstate = ( $return->{result}[0]{status} eq "active" ? "on" : $return->{result}[0]{status} );
+        } else {
+          $newstate = ( $return->{status}{name} eq "viewing" ? "on" : $return->{status}{name} );
+        }
+        # get current system settings
+        if ($newstate eq "on" && ReadingsVal($name, "upnp", "") eq "on") {
+          BRAVIA_SendCommand( $hash, "upnp", "getVolume" );
+          BRAVIA_SendCommand( $hash, "upnp", "getMute" );
+        }
+      }
+    }
+    
+    # getSystemInformation
+    elsif ( $service eq "getSystemInformation" ) {
+      if ( ref($return) eq "HASH" ) {
+        if (ref($return->{result}) eq "ARRAY") {
+          my $sysInfo = $return->{result}[0];
+          readingsBulkUpdate( $hash, "name", $sysInfo->{name} );
+          readingsBulkUpdate( $hash, "generation", $sysInfo->{generation} );
+          readingsBulkUpdate( $hash, "area", $sysInfo->{area} );
+          readingsBulkUpdate( $hash, "language", $sysInfo->{language} );
+          readingsBulkUpdate( $hash, "country", $sysInfo->{region} );
+          readingsBulkUpdate( $hash, "modelName", $sysInfo->{model} );
+          $hash->{name} = $sysInfo->{name};
+          $hash->{modelName} = $sysInfo->{model};
+          $hash->{generation} = $sysInfo->{generation};
+        } else {
+          readingsBulkUpdate( $hash, "name", $return->{name} );
+          readingsBulkUpdate( $hash, "generation", $return->{generation} );
+          readingsBulkUpdate( $hash, "area", $return->{area} );
+          readingsBulkUpdate( $hash, "language", $return->{language} );
+          readingsBulkUpdate( $hash, "country", $return->{country} );
+          readingsBulkUpdate( $hash, "modelName", $return->{modelName} );
+          $hash->{name} = $return->{name};
+          $hash->{modelName} = $return->{modelName};
+          $hash->{generation} = $return->{generation};
+        }
+      }
+    }
+    
+    # getContentInformation
+    elsif ( $service eq "getContentInformation" ) {
+      my %contentKeys;
+      my $channelName = "-";
+      my $channelNo = "-";
+      my $currentTitle = "-";
+      my $currentMedia = "-";
+      foreach ( keys %{ $hash->{READINGS} } ) {
+        $contentKeys{$_} = 1
+            if ( $_ =~ /^ci_.*/ and ReadingsVal($name, $_, "") ne "-" );
+      }
+      if ( ref($return) eq "HASH" ) {
+        $newstate = "on";
+        if ( defined($return->{infoItem}) ) {
+          # xml
+          if ( ref($return->{infoItem}) eq "ARRAY" ) {
+            foreach ( @{ $return->{infoItem} } ) {
+              if ( $_->{field} eq "displayNumber" ) {
+                $channelNo = $_->{value};
+              } elsif ( $_->{field} eq "inputType" ) {
+                $currentMedia = $_->{value};
+              } elsif ( $_->{field} eq "serviceName" ) {
+                $channelName = $_->{value};
+                $channelName =~ s/^\s+//;
+                $channelName =~ s/\s+$//;
+                $channelName =~ s/\s/_/g;
+                $channelName =~ s/,/./g;
+              } elsif ( $_->{field} eq "title" ) {
+                $currentTitle = Encode::decode_utf8($_->{value});
+              } else {
+                readingsBulkUpdate( $hash, "ci_".$_->{field}, $_->{value} )
+                    if ( ReadingsVal($name, "ci_".$_->{field}, "") ne $_->{value} );
+                delete $contentKeys{"ci_".$_->{field}};
+              }
+            }
+          } else {
+            my $field = "ci_".$return->{infoItem}->{field};
+            my $value = $return->{infoItem}->{value};
+            readingsBulkUpdate( $hash, $field, $value )
+                if ( ReadingsVal($name, $field, "") ne $value );
+            delete $contentKeys{$field};
+          }
+        } else {
+          # json
+          if ( ref($return->{result}[0]) eq "HASH" ) {
+            foreach ( keys %{$return->{result}[0]} ) {
+              if ( $_ eq "dispNum" ) {
+                $channelNo = $return->{result}[0]{$_};
+              } elsif ( $_ eq "programMediaType" ) {
+                $currentMedia = $return->{result}[0]{$_};
+              } elsif ( $_ eq "title" ) {
+                $channelName = $return->{result}[0]{$_};
+                $channelName =~ s/^\s+//;
+                $channelName =~ s/\s+$//;
+                $channelName =~ s/\s/_/g;
+                $channelName =~ s/,/./g;
+              } elsif ( $_ eq "programTitle" ) {
+                $currentTitle = Encode::decode_utf8($return->{result}[0]{$_});
+              } elsif ( $_ eq "source" ) {
+                readingsBulkUpdate( $hash, "input", $return->{result}[0]{$_} )
+                    if ( ReadingsVal($name, "input", "") ne $return->{result}[0]{$_} );
+              } else {
+                readingsBulkUpdate( $hash, "ci_".$_, $return->{result}[0]{$_} )
+                    if ( ReadingsVal($name, "ci_".$_, "") ne $return->{result}[0]{$_} );
+                delete $contentKeys{"ci_".$_};
+              }
+            }
+          }
+        }
+      } else {
+        if ( ReadingsVal($name, "input", "") eq "Others" || ReadingsVal($name, "input", "") eq "Broadcast" ) {
+          $newstate = "off";
+        } else {
+          $newstate = "on";
+        }
+      }
+      readingsBulkUpdate( $hash, "channel", $channelName )
+          if ( ReadingsVal($name, "channel", "") ne $channelName );
+      readingsBulkUpdate( $hash, "channelId", $channelNo )
+          if ( ReadingsVal($name, "channelId", "") ne $channelNo );
+      readingsBulkUpdate( $hash, "currentTitle", $currentTitle )
+          if ( ReadingsVal($name, "currentTitle", "") ne $currentTitle );
+      readingsBulkUpdate( $hash, "currentMedia", $currentMedia )
+          if ( ReadingsVal($name, "currentMedia", "") ne $currentMedia );
+    
+      if ($channelName ne "-" && $channelNo ne "-") {
+        $hash->{helper}{device}{channelPreset}{ $channelNo }{id} = $channelNo;
+        $hash->{helper}{device}{channelPreset}{ $channelNo }{name} = $channelName;
+      }
+    
+      #remove outdated content information - replaces by "-"
+      foreach ( keys %contentKeys ) {
+        readingsBulkUpdate( $hash, $_, "-" );
+      }
+    
+      # get current system settings
+      if ($newstate eq "on" && (ReadingsVal($name, "upnp", "") eq "on")) {
+        BRAVIA_SendCommand( $hash, "upnp", "getVolume" );
+        BRAVIA_SendCommand( $hash, "upnp", "getMute" );
+      }
+    }
+    
+    # register
+    elsif ( $service eq "register" ) {
+      if ( $header =~ /auth=([a-z0-9]+)/ ) {
+        readingsBulkUpdate( $hash, "authCookie", $1 );
+      }
+      if ( $header =~ /expires=\w{3}, (\d{2}-\w{3}-\d{4} [0-2]\d:[0-5]\d:[0-5]\d)/ ) {
+        readingsBulkUpdate( $hash, "authExpires", $1 );
+      }
+    }
+    
+    # all other command results
+    else {
+        Log3 $name, 2, "BRAVIA $name: ERROR: method to handle response of $service not implemented";
+    }
+    
+    return $newstate;
+
+}
+
+#####################################
+sub BRAVIA_ClearContentInformation ($) {
+
+    my ($hash)    = @_;
+    my $name    = $hash->{NAME};
+
+    #remove outdated content information - replaces by "-"
+    foreach ( keys %{ $hash->{READINGS} } ) {
+      readingsBulkUpdate($hash, $_, "-")
+          if ( $_ =~ /^ci_.*/ and ReadingsVal($name, $_, "") ne "-" );
+    }
+
+    readingsBulkUpdate( $hash, "channel", "-" )
+        if ( ReadingsVal($name, "channel", "") ne "-" );
+    readingsBulkUpdate( $hash, "channelId", "-" )
+        if ( ReadingsVal($name, "channelId", "") ne "-" );
+    readingsBulkUpdate( $hash, "currentTitle", "-" )
+        if ( ReadingsVal($name, "currentTitle", "") ne "-" );
+    readingsBulkUpdate( $hash, "currentMedia", "-" )
+        if ( ReadingsVal($name, "currentMedia", "") ne "-" );
+    readingsBulkUpdate( $hash, "input", "-" )
+        if ( ReadingsVal($name, "input", "") ne "-" );
+
+}
+
 
 #####################################
 # Callback from 95_remotecontrol for command makenotify.
