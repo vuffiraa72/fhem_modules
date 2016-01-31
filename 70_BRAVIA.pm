@@ -265,7 +265,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "on" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "absent" ) {
+        if ( $hash->{READINGS}{state}{VAL} ne "on" ) {
             my $macAddr = AttrVal( $name, "macaddr", "" );
             if ( $macAddr ne "" && $macAddr ne "-" ) {
                 $result = BRAVIA_wake( $name, $macAddr );
