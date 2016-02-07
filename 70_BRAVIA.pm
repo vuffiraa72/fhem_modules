@@ -3,7 +3,7 @@
 #
 #     70_BRAVIA.pm
 #     An FHEM Perl module for controlling Sony Televisons
-#     via network connection. Supported are models of HX-series
+#     via network connection. Supported are models with release date starting from 2011.
 #     inspired by Philips Televisions Module from Julian Pawlowski <julian.pawlowski at gmail.com>
 #
 #     Copyright by Ulf von Mersewsky
@@ -25,7 +25,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.4
+# Version: 0.4.5
 #
 # Major Version History:
 # 
@@ -150,7 +150,7 @@ sub BRAVIA_Set($@) {
       : "";
     my $channels   = "";
     my $inputs_txt = "";
-    my $mutes = "toogle";
+    my $mutes = "toggle";
 
     if ( defined( $hash->{READINGS}{input}{VAL} )
         && $hash->{READINGS}{input}{VAL} ne "-" )
@@ -641,7 +641,7 @@ sub BRAVIA_Define($$) {
     my $address = $a[2];
     $hash->{helper}{ADDRESS} = $address;
 
-    # use interval of 120sec if not defined
+    # use interval of 45 sec if not defined
     my $interval = $a[3] || 45;
     $hash->{INTERVAL} = $interval;
 
@@ -1768,3 +1768,116 @@ sub BRAVIA_CheckRegistration($) {
 }
 
 1;
+=pod
+=begin html
+
+<a name="BRAVIA"></a>
+<h3>BRAVIA</h3>
+
+=end html
+=begin html_DE
+
+<a name="BRAVIA"></a>
+<h3>BRAVIA</h3>
+<ul>
+  Diese Module dient zur Steuerung von Sony TVs der BRAVIA-Serien beginnend mit dem Modelljahr 2011. 
+  <br><br>
+  <b>Define</b>
+  <ul>
+    <code>define &lt;name&gt; BRAVIA &lt;ip-or-hostname&gt; [&lt;poll-interval&gt;]</code>
+    <br><br>
+    Bei der Definition eines BRAVIA Gerätes wird ein interner Task eingeplant,
+    der regelmäßig den Status des TV prüft und weitere Informationen abruft.<br>
+    Das Intervall des Tasks kann durch den optionalen Parameter &lt;poll-intervall&gt; in Sekunden gesetzt werden.
+    Ansonsten wird der Task mit 45 Sekunden als Intervall definiert.
+    <br><br>
+    Nach der Definition eines Gerätes muss dieses einmalig im TV als Fernbedienung
+    registriert werden (<a href=#BRAVIAregister><code>set register</code></a>).
+    <br><br>
+    Soweit die Readings nicht den allgemeinen AV Readings entsprechen, sind sie gruppiert:
+    <table>
+      <tr><td>s_*</td><td>: Status</td></tr>
+      <tr><td>ci_*</td><td>: Inhaltsinfo</td></tr>
+    </table>
+    <br><br>
+    Das Modul enthält vorgefertigte Layouts für <a href=#remotecontrol>remotecontrol</a> mit PNG und SVG.
+    <br><br>
+  </ul>
+  <a name="BRAVIAset"></a>
+  <b>Set</b> 
+    <ul><b>channel</b>
+      <ul>Liste alle bekannten Kanäle. Das Modul merkt sich alle aufgerufenen Kanäle.</ul>
+    </ul>
+    <ul><b>channelDown</b>
+      <ul></ul>
+    </ul>
+    <ul><b>channelUp</b>
+      <ul></ul>
+    </ul>
+    <ul><b>mute</b>
+      <ul>Direkte Stummschaltung erfolgt nur per aktiviertem <a href=#BRAVIAupnp>Upnp</a>.</ul>
+    </ul>
+    <ul><b>off</b>
+      <ul></ul>
+    </ul>
+    <ul><a name="BRAVIAon"></a><b>on</b>
+      <ul>Einschalten des TV per WOL, wenn das Attribute <a href=BRAVIAmacaddr>macaddr</a> gesetzt ist.</ul>
+    </ul>
+    <ul><b>pause</b>
+      <ul></ul>
+    </ul>
+    <ul><b>play</b>
+      <ul></ul>
+    </ul>
+    <ul><b>record</b>
+      <ul></ul>
+    </ul>
+    <ul><a name="BRAVIAregister"></a><b>register</b>
+      <ul>Einmalige Registrierung von FHEM als Fernbedienung im TV.</ul>
+      <ul>Bei <a href=#BRAVIArequestFormat>requestFormat</a> = "xml" erfolgt die Registrierung ohne Parameter.</ul>
+      <ul>Bei <a href=#BRAVIArequestFormat>requestFormat</a> = "json" ist die Registrierung zweistufig.
+          Beim Aufruf des Setter gibt es ein Eingabefeld:<br>
+          Aufruf mit leerem Eingabefeld. Auf dem TV sollte eine PIN zur Registrierung erscheinen.<br>
+          PIN im Eingabefeld eintragen und Registrierung noch mal ausführen</ul>
+    </ul>
+    <ul><a name="BRAVIArequestFormat"></a><b>requestFormat</b>
+      <ul>"xml" für xml-basierte Kommunikation 2011er/2012er Geräte</ul>
+      <ul>"json" für die Kommunikation seit der 2013er Generation</ul>
+    </ul>
+    <ul><b>remoteControl</b>
+      <ul>Direktes Senden von Kommandos an den TV.</ul>
+    </ul>
+    <ul><b>statusRequest</b>
+      <ul></ul>
+    </ul>
+    <ul><b>stop</b>
+      <ul></ul>
+    </ul>
+    <ul><b>toggle</b>
+      <ul>Wechselt den Einschaltstatus des TV.</ul>
+    </ul>
+    <ul><b>tvpause</b>
+      <ul>Aktiviert Timeshift.</ul>
+    </ul>
+    <ul><a name="BRAVIAupnp"></a><b>upnp</b>
+      <ul>Aktiviert Upnp zum Abfragen und Stellen der Lautstärke.</ul>
+    </ul>
+    <ul><b>volume</b>
+      <ul>Direktes Setzen der Lautstärke erfolgt nur per aktiviertem <a href=#BRAVIAupnp>Upnp</a>.</ul>
+    </ul>
+    <ul><b>volumeDown</b>
+      <ul></ul>
+    </ul>
+    <ul><b>volumeUp</b>
+      <ul></ul>
+    </ul>
+    <br><br>
+  <a name="BRAVIAattr"></a>
+  <b>Attributes</b> 
+  <ul><b>macaddr</b>
+    <ul>Ermöglicht das Einschalten des TV per WOL.</ul>
+  </ul>
+</ul>
+
+=end html_DE
+=cut
