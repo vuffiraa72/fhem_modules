@@ -778,6 +778,12 @@ sub BRAVIA_SendCommand($$;$$) {
       } else {
         $URL .= "/cersEx/api/" . $service;
       }
+    } elsif ($service eq "getContentList") {
+      $URL .= $port->{SERVICE};
+      if ($requestFormat eq "json") {
+        $URL .= "/sony/avContent";
+        $data = "{\"method\":\"getContentList\",\"params\":[{\"source\":\"" . $cmd . "\",\"type\":\"\",\"cnt\":50,\"stIdx\":\"\"}],\"id\":1,\"version\":\"1.2\"}";
+      }
     } elsif ($service eq "getScheduleList") {
       $URL .= $port->{SERVICE};
       if ($requestFormat eq "json") {
@@ -1341,6 +1347,8 @@ sub BRAVIA_ProcessCommandData ($$) {
           if ( ReadingsVal($name, "currentMedia", "") ne $currentMedia );
     
       if ($channelName ne "-" && $channelNo ne "-") {
+        BRAVIA_SendCommand( $hash, "getContentList", ReadingsVal($name, "input", "") )
+          if (ReadingsVal($name, "requestFormat", "") eq "json" && !defined($hash->{helper}{device}{channelPreset}{ $channelNo }));
         $hash->{helper}{device}{channelPreset}{ $channelNo }{id} = $channelNo;
         $hash->{helper}{device}{channelPreset}{ $channelNo }{name} = $channelName;
       }
@@ -1414,6 +1422,34 @@ sub BRAVIA_ProcessCommandData ($$) {
       if (ReadingsVal($name, "upnp", "") eq "on") {
         BRAVIA_SendCommand( $hash, "upnp", "getVolume" );
         BRAVIA_SendCommand( $hash, "upnp", "getMute" );
+      }
+    }
+
+    # getContentList
+    elsif ( $service eq "getContentList" ) {
+      if ( ref($return) eq "HASH" ) {
+        if (ref($return->{result}) eq "ARRAY") {
+          foreach ( @{ $return->{result} } ) {
+            foreach ( @{ $_ } ) {
+              my $channelNo;
+              my $channelName;
+              my $key;
+              foreach $key ( keys %{ $_ }) {
+                if ( $key eq "dispNum" ) {
+                  $channelNo = $_->{$key};
+                } elsif ( $key eq "title" ) {
+                  $channelName = $_->{$key};
+                  $channelName =~ s/^\s+//;
+                  $channelName =~ s/\s+$//;
+                  $channelName =~ s/\s/_/g;
+                  $channelName =~ s/,/./g;
+                }
+              }
+              $hash->{helper}{device}{channelPreset}{ $channelNo }{id} = $channelNo;
+              $hash->{helper}{device}{channelPreset}{ $channelNo }{name} = $channelName;
+            }
+          }
+        }
       }
     }
 
