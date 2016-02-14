@@ -242,8 +242,6 @@ sub BRAVIA_Set($@) {
 
         delete $hash->{helper}{device}
           if ( defined( $hash->{helper}{device} ) );
-        delete $hash->{helper}{supportedAPIcmds}
-          if ( defined( $hash->{helper}{supportedAPIcmds} ) );
 
         BRAVIA_GetStatus($hash);
     }
@@ -267,6 +265,7 @@ sub BRAVIA_Set($@) {
 
         if ( $hash->{READINGS}{state}{VAL} ne "on" ) {
             my $macAddr = AttrVal( $name, "macaddr", "" );
+            $macAddr = ReadingsVal( $name, "macAddr", "") if ($macAddr eq "");
             if ( $macAddr ne "" && $macAddr ne "-" ) {
                 $result = BRAVIA_wake( $name, $macAddr );
                 return "wake-up command sent";
@@ -702,14 +701,7 @@ sub BRAVIA_SendCommand($$;$$) {
     my $URL;
     my $response;
     my $return;
-
-    if ( defined( $hash->{helper}{supportedAPIcmds}{$service} )
-        && $hash->{helper}{supportedAPIcmds}{$service} == 0 )
-    {
-        Log3 $name, 5,
-          "BRAVIA $name: API command '" . $service . "' not supported by device.";
-        return;
-    }
+    my $requestFormat = ReadingsVal($name, "requestFormat", "");
 
     BRAVIA_CheckRegistration($hash) if ($service ne "register" && $service ne "getStatus");
 
@@ -721,13 +713,12 @@ sub BRAVIA_SendCommand($$;$$) {
     }
 
     $URL = "http://" . $address . ":";
-    $header .= "\r\nCookie: auth=".$hash->{READINGS}{authCookie}{VAL}
-        if (defined($hash->{READINGS}{authCookie}{VAL}));
+    $header .= "\r\nCookie: auth=".ReadingsVal($name, "authCookie", "")
+        if (ReadingsVal($name, "authCookie", "") ne "");
     if ($service eq "ircc") {
       $URL .= $port->{IRCC};
       $URL .= "/sony"
-          if (defined($hash->{READINGS}{requestFormat}{VAL}) &&
-              $hash->{READINGS}{requestFormat}{VAL} eq "json");
+          if ($requestFormat eq "json");
       $URL .= "/IRCC";
       $header .= "\r\nSoapaction: \"urn:schemas-sony-com:service:IRCC:1#X_SendIRCC\"";
       $header .= "\r\nContent-Type: text/xml; charset=UTF-8";
@@ -750,10 +741,9 @@ sub BRAVIA_SendCommand($$;$$) {
       my $name = "Fhem Remote";
       my $device = "fhem_remote";
       $URL .= $port->{SERVICE};
-      if (defined($hash->{READINGS}{requestFormat}{VAL}) && $hash->{READINGS}{requestFormat}{VAL} eq "json") {
-        my $uuid;
-        if (defined($cmd) && defined($hash->{READINGS}{registrationUUID}{VAL})) {
-          $uuid = $hash->{READINGS}{registrationUUID}{VAL};
+      if ($requestFormat eq "json") {
+        my $uuid = ReadingsVal($name, "registrationUUID", "");
+        if (defined($cmd) && $uuid ne "") {
           if ($cmd ne "renew") {
             $header = "Authorization: Basic ";
             $header .= encode_base64(":".$cmd,"");
@@ -782,15 +772,23 @@ sub BRAVIA_SendCommand($$;$$) {
       }
     } elsif ($service eq "getContentInformation") {
       $URL .= $port->{SERVICE};
-      if (defined($hash->{READINGS}{requestFormat}{VAL}) && $hash->{READINGS}{requestFormat}{VAL} eq "json") {
+      if ($requestFormat eq "json") {
         $URL .= "/sony/avContent";
         $data = "{\"method\":\"getPlayingContentInfo\",\"params\":[\"\"],\"id\":1,\"version\":\"1.0\"}";
       } else {
         $URL .= "/cersEx/api/" . $service;
       }
+    } elsif ($service eq "getScheduleList") {
+      $URL .= $port->{SERVICE};
+      if ($requestFormat eq "json") {
+        $URL .= "/sony/recording";
+        $data = "{\"method\":\"getScheduleList\",\"params\":[{\"cnt\":100,\"stIdx\":0}],\"id\":1,\"version\":\"1.0\"}";
+      } else {
+        $URL .= "/cersEx/api/" . $service;
+      }
     } else {
       $URL .= $port->{SERVICE};
-      if (defined($hash->{READINGS}{requestFormat}{VAL}) && $hash->{READINGS}{requestFormat}{VAL} eq "json") {
+      if ($requestFormat eq "json") {
         $URL .= "/sony/system";
         $data = "{\"method\":\"".$service."\",\"params\":[\"\"],\"id\":1,\"version\":\"1.0\"}";
       } else {
@@ -910,14 +908,8 @@ sub BRAVIA_ReceiveCommand($$$) {
         else {
             $newstate = "on";
 
-            # because it does not seem to support the command
-            if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) ) {
-                $hash->{helper}{supportedAPIcmds}{$service} = 0;
-                Log3 $name, 3,
-                    "BRAVIA $name: API command '"
-                  . $service
-                  . "' not supported by device.";
-            }
+            Log3 $name, 3,
+                "BRAVIA $name: API command '".$service."' not supported by device.";
         }
     }
 
@@ -958,11 +950,8 @@ sub BRAVIA_ReceiveCommand($$$) {
                       "BRAVIA $name: RES $service/" . urlDecode($cmd) . " - $data";
                 }
 
-                $hash->{helper}{supportedAPIcmds}{$service} = 1
-                  if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) );
-
                 readingsBulkUpdate( $hash, "requestFormat", "xml" )
-                  if ( $service eq "getStatus" && !defined( $hash->{READINGS}{requestFormat}{VAL} ) );
+                  if ( $service eq "getStatus" && ReadingsVal($name , "requestFormat", "") eq "" );
 
                 $return = $parser->XMLin( Encode::encode_utf8($data) );
             }
@@ -976,11 +965,8 @@ sub BRAVIA_ReceiveCommand($$$) {
                       "BRAVIA $name: RES $service/" . urlDecode($cmd) . " - $data";
                 }
 
-                $hash->{helper}{supportedAPIcmds}{$service} = 1
-                  if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) );
-
                 readingsBulkUpdate( $hash, "requestFormat", "json" )
-                  if ( $service eq "getStatus" && !defined( $hash->{READINGS}{requestFormat}{VAL} ) );
+                  if ( $service eq "getStatus" && ReadingsVal($name , "requestFormat", "") eq "" );
 
                 $return = decode_json( Encode::encode_utf8($data) );
             }
@@ -994,9 +980,6 @@ sub BRAVIA_ReceiveCommand($$$) {
                       "BRAVIA $name: RES $service/" . urlDecode($cmd) . " - not found";
                 }
 
-                $hash->{helper}{supportedAPIcmds}{$service} = 1
-                  if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) );
-                
                 $return = "not found";
             }
 
@@ -1009,9 +992,6 @@ sub BRAVIA_ReceiveCommand($$$) {
                       "BRAVIA $name: RES $service/" . urlDecode($cmd) . " - response";
                 }
 
-                $hash->{helper}{supportedAPIcmds}{$service} = 1
-                  if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) );
-                
                 $return = "ok";
             }
 
@@ -1024,14 +1004,6 @@ sub BRAVIA_ReceiveCommand($$$) {
                         "BRAVIA $name: RES ERROR $service/"
                       . urlDecode($cmd) . "\n"
                       . $data;
-                }
-
-                if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) ) {
-                    $hash->{helper}{supportedAPIcmds}{$service} = 0;
-                    Log3 $name, 3,
-                        "BRAVIA $name: API command '"
-                      . $service
-                      . "' not supported by device.";
                 }
 
                 return undef;
@@ -1049,16 +1021,14 @@ sub BRAVIA_ReceiveCommand($$$) {
       if ( $newstate eq "on" ) {
           $readingPower = "on";
       }
-      if ( !defined( $hash->{READINGS}{power}{VAL} )
-          || $hash->{READINGS}{power}{VAL} ne $readingPower )
+      if ( ReadingsVal($name, "power", "") ne $readingPower )
       {
           readingsBulkUpdate( $hash, "power", $readingPower );
       }
   
       # Set reading for state
       #
-      if ( !defined( $hash->{READINGS}{state}{VAL} )
-          || $hash->{READINGS}{state}{VAL} ne $newstate )
+      if ( ReadingsVal($name, "state", "") ne $newstate )
       {
           readingsBulkUpdate( $hash, "state", $newstate );
       }
@@ -1069,8 +1039,7 @@ sub BRAVIA_ReceiveCommand($$$) {
           || $newstate eq "undefined" )
       {
           foreach ( 'input', ) {
-            if ( !defined( $hash->{READINGS}{$_}{VAL} )
-                || $hash->{READINGS}{$_}{VAL} ne "-" ) {
+            if ( ReadingsVal($name, $_, "-") ne "-" ) {
               readingsBulkUpdate( $hash, $_, "-" );
             }
           }
@@ -1264,6 +1233,7 @@ sub BRAVIA_ProcessCommandData ($$) {
           readingsBulkUpdate( $hash, "language", $sysInfo->{language} );
           readingsBulkUpdate( $hash, "country", $sysInfo->{region} );
           readingsBulkUpdate( $hash, "modelName", $sysInfo->{model} );
+          readingsBulkUpdate( $hash, "macAddr", $sysInfo->{macAddr} );
           $hash->{name} = $sysInfo->{name};
           $hash->{modelName} = $sysInfo->{model};
           $hash->{generation} = $sysInfo->{generation};
@@ -1348,7 +1318,11 @@ sub BRAVIA_ProcessCommandData ($$) {
                 delete $contentKeys{"ci_".$_};
               }
             }
-          }
+          } elsif ( ref($return->{error}) eq "ARRAY" && $return->{error}[0] eq "7" && $return->{error}[1] eq "Illegal State" ) {
+              #could be timeshift mode
+              BRAVIA_SendCommand( $hash, "getScheduleList" );
+              return;
+          }          
         }
       } else {
         if ( ReadingsVal($name, "input", "") eq "Others" || ReadingsVal($name, "input", "") eq "Broadcast" ) {
@@ -1383,9 +1357,69 @@ sub BRAVIA_ProcessCommandData ($$) {
       }
     }
     
+    # getScheduleList
+    elsif ( $service eq "getScheduleList" ) {
+      my %contentKeys;
+      my $channelName = "-";
+      my $currentTitle = "-";
+      my $currentMedia = "-";
+      foreach ( keys %{ $hash->{READINGS} } ) {
+        $contentKeys{$_} = 1
+            if ( $_ =~ /^ci_.*/ and ReadingsVal($name, $_, "") ne "-" );
+      }
+      if ( ref($return) eq "HASH" ) {
+        if (ref($return->{result}) eq "ARRAY") {
+          $newstate = "on";
+          foreach ( @{ $return->{result} } ) {
+            foreach ( @{ $_ } ) {
+              if ($_->{recordingStatus} eq "recording") {
+                my $key;
+                foreach $key ( keys %{ $_ }) {
+                  if ( $key eq "type" ) {
+                    $currentMedia = $_->{$key};
+                    readingsBulkUpdate( $hash, "input", $_->{$key} )
+                        if ( ReadingsVal($name, "input", "") ne $_->{$key} );
+                  } elsif ( $key eq "channelName" ) {
+                    $channelName = $_->{$key};
+                    $channelName =~ s/^\s+//;
+                    $channelName =~ s/\s+$//;
+                    $channelName =~ s/\s/_/g;
+                    $channelName =~ s/,/./g;
+                  } elsif ( $key eq "title" ) {
+                    $currentTitle = Encode::decode_utf8($_->{$key});
+                  } else {
+                    readingsBulkUpdate( $hash, "ci_".$key, $_->{$key} )
+                        if ( ReadingsVal($name, "ci_".$key, "") ne $_->{$key} );
+                    delete $contentKeys{"ci_".$key};
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      readingsBulkUpdate( $hash, "channel", $channelName )
+          if ( ReadingsVal($name, "channel", "") ne $channelName );
+      readingsBulkUpdate( $hash, "currentTitle", $currentTitle )
+          if ( ReadingsVal($name, "currentTitle", "") ne $currentTitle );
+      readingsBulkUpdate( $hash, "currentMedia", $currentMedia )
+          if ( ReadingsVal($name, "currentMedia", "") ne $currentMedia );
+    
+      #remove outdated content information - replaces by "-"
+      foreach ( keys %contentKeys ) {
+        readingsBulkUpdate( $hash, $_, "-" );
+      }
+
+      # get current system settings
+      if (ReadingsVal($name, "upnp", "") eq "on") {
+        BRAVIA_SendCommand( $hash, "upnp", "getVolume" );
+        BRAVIA_SendCommand( $hash, "upnp", "getMute" );
+      }
+    }
+
     # register
     elsif ( $service eq "register" ) {
-      if ( $header =~ /auth=([a-z0-9]+)/ ) {
+      if ( $header =~ /auth=([A-Za-z0-9]+)/ ) {
         readingsBulkUpdate( $hash, "authCookie", $1 );
       }
       if ( $header =~ /expires=\w{3}, (\d{2}-\w{3}-\d{4} [0-2]\d:[0-5]\d:[0-5]\d)/ ) {
