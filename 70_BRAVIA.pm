@@ -738,7 +738,7 @@ sub BRAVIA_SendCommand($$;$$) {
       $header .= "\r\nContent-Type: text/xml";
       $data = BRAVIA_GetUpnpRequest($cmd, $value);
     } elsif ($service eq "register") {
-      my $name = "Fhem Remote";
+      my $id = "Fhem Remote";
       my $device = "fhem_remote";
       $URL .= $port->{SERVICE};
       if ($requestFormat eq "json") {
@@ -755,12 +755,12 @@ sub BRAVIA_SendCommand($$;$$) {
         }
         $URL .= "/sony/accessControl";
         $data = "{\"method\":\"actRegister\",\"params\":[{";
-        $data .= "\"clientid\":\"".$name.":".$uuid."\",";
-        $data .= "\"nickname\":\"".$name." (".$device.")\",";
+        $data .= "\"clientid\":\"".$id.":".$uuid."\",";
+        $data .= "\"nickname\":\"".$id." (".$device.")\",";
         $data .= "\"level\":\"private\"},";
         $data .= "[{\"value\":\"yes\",\"function\":\"WOL\"}]],\"id\":8,\"version\":\"1.0\"}";
       } else {
-        $URL .= "/cers/api/register?name=".urlEncode($name)."&registrAtionType=initial&deviceId=".$device;
+        $URL .= "/cers/api/register?name=".urlEncode($id)."&registrAtionType=initial&deviceId=".$device;
       }
     } elsif ($service eq "getStatus") {
       $URL .= $port->{SERVICE};
@@ -1424,6 +1424,9 @@ sub BRAVIA_ProcessCommandData ($$) {
       }
       if ( $header =~ /expires=\w{3}, (\d{2}-\w{3}-\d{4} [0-2]\d:[0-5]\d:[0-5]\d)/ ) {
         readingsBulkUpdate( $hash, "authExpires", $1 );
+      }
+      if ( $header =~ /Expires=\w{2}., (\d{2}) (\w{3}). (\d{4}) ([0-2]\d:[0-5]\d:[0-5]\d)/ ) {
+        readingsBulkUpdate( $hash, "authExpires", $1."-".$2."-".$3." ".$4 );
       }
     }
     
