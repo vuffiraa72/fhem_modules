@@ -768,13 +768,13 @@ sub BRAVIA_SendCommand($$;$$) {
         $URL .= "/cers/api/" . $service;
       } else {
         $URL .= "/sony/system";
-        $data = "{\"method\":\"getPowerStatus\",\"params\":[\"\"],\"id\":1,\"version\":\"1.0\"}";
+        $data = "{\"method\":\"getPowerStatus\",\"params\":[],\"id\":1,\"version\":\"1.0\"}";
       }
     } elsif ($service eq "getContentInformation") {
       $URL .= $port->{SERVICE};
       if ($requestFormat eq "json") {
         $URL .= "/sony/avContent";
-        $data = "{\"method\":\"getPlayingContentInfo\",\"params\":[\"\"],\"id\":1,\"version\":\"1.0\"}";
+        $data = "{\"method\":\"getPlayingContentInfo\",\"params\":[],\"id\":1,\"version\":\"1.0\"}";
       } else {
         $URL .= "/cersEx/api/" . $service;
       }
@@ -796,7 +796,7 @@ sub BRAVIA_SendCommand($$;$$) {
       $URL .= $port->{SERVICE};
       if ($requestFormat eq "json") {
         $URL .= "/sony/system";
-        $data = "{\"method\":\"".$service."\",\"params\":[\"\"],\"id\":1,\"version\":\"1.0\"}";
+        $data = "{\"method\":\"".$service."\",\"params\":[],\"id\":1,\"version\":\"1.0\"}";
       } else {
         $URL .= "/cers";
         if ($service =~ /^Mute.*$/) {
