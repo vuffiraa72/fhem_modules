@@ -70,7 +70,7 @@ sub BRAVIA_Initialize($) {
     $hash->{UndefFn} = "BRAVIA_Undefine";
 
     $hash->{AttrList} =
-"disable:0,1 timeout inputs macaddr:textField "
+"disable:0,1 timeout inputs macaddr:textField channelsMax:textField "
       . $readingFnAttributes;
 
     $data{RC_layout}{BRAVIA_SVG} = "BRAVIA_RClayout_SVG";
@@ -139,25 +139,16 @@ sub BRAVIA_Get($@) {
 sub BRAVIA_Set($@) {
     my ( $hash, @a ) = @_;
     my $name  = $hash->{NAME};
-    my $state = $hash->{READINGS}{state}{VAL};
-    my $channel =
-      ( $hash->{READINGS}{channel}{VAL} )
-      ? $hash->{READINGS}{channel}{VAL}
-      : "";
-    my $channelId =
-      ( $hash->{READINGS}{channelId}{VAL} )
-      ? $hash->{READINGS}{channelId}{VAL}
-      : "";
+    my $state = ReadingsVal($name, "state", "");
+    my $channel = ReadingsVal($name, "channel", "");
+    my $channelId = ReadingsVal($name, "channelId", "");
     my $channels   = "";
     my $inputs_txt = "";
     my $mutes = "toggle";
 
-    if ( defined( $hash->{READINGS}{input}{VAL} )
-        && $hash->{READINGS}{input}{VAL} ne "-" )
-    {
-        $hash->{helper}{lastInput} = $hash->{READINGS}{input}{VAL};
-    }
-    elsif ( !defined( $hash->{helper}{lastInput} ) ) {
+    if ( ReadingsVal($name, "input", "") ne "-" ) {
+        $hash->{helper}{lastInput} = ReadingsVal($name, "input", "");
+    } elsif ( !defined( $hash->{helper}{lastInput} ) ) {
         $hash->{helper}{lastInput} = "";
     }
 
@@ -198,7 +189,12 @@ sub BRAVIA_Set($@) {
     if ( defined( $hash->{helper}{device}{channelPreset} )
         && ref( $hash->{helper}{device}{channelPreset} ) eq "HASH" )
     {
-      foreach my $preset ( keys %{ $hash->{helper}{device}{channelPreset} } ) {
+      my $count = 0;
+      my @keys = keys %{ $hash->{helper}{device}{channelPreset} };
+      @keys = sort(@keys);
+      my $maxChannels = (@keys < AttrVal($name, "channelsMax", 50) ? @keys : AttrVal($name, "channelsMax", 50));
+      for (my $i = 0; $i < $maxChannels; $i++) {
+        my $preset = $keys[$i];
         if ( $hash->{helper}{device}{channelPreset}{$preset}{name}
             && $hash->{helper}{device}{channelPreset}{$preset}{name} ne ""
             && $hash->{helper}{device}{channelPreset}{$preset}{name} ne "-"
@@ -207,7 +203,7 @@ sub BRAVIA_Set($@) {
               @channels,
               $hash->{helper}{device}{channelPreset}{$preset}{id}.":".$hash->{helper}{device}{channelPreset}{$preset}{name});
         }
-      };
+      }
     }
     if ( $channel ne "" && $channel ne "-" && $channelId ne "-" ) {
         my $currentChannel = $channelId . ":" . $channel;
@@ -226,8 +222,7 @@ sub BRAVIA_Set($@) {
     my $usage = "Unknown argument " . $a[1] . ", choose one of";
     $usage .= " requestFormat:json,xml register";
     $usage .= ":noArg"
-        if (defined($hash->{READINGS}{requestFormat}{VAL}) &&
-            $hash->{READINGS}{requestFormat}{VAL} eq "xml");
+        if (ReadingsVal($name, "requestFormat", "") eq "xml");
     $usage .= " statusRequest:noArg toggle:noArg on:noArg off:noArg tvpause:noarg play:noArg pause:noArg stop:noArg record:noArg upnp:on,off volume:slider,1,1,100 volumeUp:noArg volumeDown:noArg channelUp:noArg channelDown:noArg remoteControl";
     $usage .= " mute:" . $mutes;
     $usage .= " input:" . $inputs_txt if ( $inputs_txt ne "" );
@@ -250,7 +245,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "toggle" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} ne "on" ) {
+        if ( $state ne "on" ) {
             return BRAVIA_Set( $hash, $name, "on" );
         }
         else {
@@ -263,7 +258,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "on" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} ne "on" ) {
+        if ( $state ne "on" ) {
             my $macAddr = AttrVal( $name, "macaddr", "" );
             $macAddr = ReadingsVal( $name, "macAddr", "") if ($macAddr eq "");
             if ( $macAddr ne "" && $macAddr ne "-" ) {
@@ -280,8 +275,8 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "off" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} ne "absent" ) {
-            if ( defined($hash->{READINGS}{generation}{VAL}) && $hash->{READINGS}{generation}{VAL} ne "1.0" ) {
+        if ( $state ne "absent" ) {
+            if ( ReadingsVal($name, "generation", "") ne "1.0" ) {
               $cmd = "STANDBY";
             } else {
               $cmd = "POWER";
@@ -300,7 +295,7 @@ sub BRAVIA_Set($@) {
         return "No argument given" if ( !defined( $a[2] ) );
 
         my $vol = $a[2];
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             if ( $vol =~ m/^\d+$/ && $vol >= 1 && $vol <= 100 ) {
                 $cmd = 'setVolume:' . $vol;
             }
@@ -311,7 +306,7 @@ sub BRAVIA_Set($@) {
             BRAVIA_SendCommand( $hash, "upnp", $cmd );
 
             readingsSingleUpdate( $hash, "volume", $a[2], 1 )
-              if ( $hash->{READINGS}{volume}{VAL} ne $a[2] );
+              if ( ReadingsVal($name, "volume", "") ne $a[2] );
         }
         else {
             return "Device needs to be ON to adjust volume.";
@@ -322,7 +317,7 @@ sub BRAVIA_Set($@) {
     elsif ( lc( $a[1] ) =~ /^(volumeup|volumedown)$/ ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             if ( lc( $a[1] ) eq "volumeup" ) {
                 $cmd = "VOLUP";
             }
@@ -345,22 +340,22 @@ sub BRAVIA_Set($@) {
             Log3 $name, 2, "BRAVIA set $name " . $a[1];
         }
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             if ( !defined( $a[2] ) || $a[2] eq "toggle" ) {
                 $result = BRAVIA_SendCommand( $hash, "ircc", "MUTE" );
-                readingsSingleUpdate( $hash, "mute", ($hash->{READINGS}{mute}{VAL} eq "on" ? "off" : "on"), 1 );
+                readingsSingleUpdate( $hash, "mute", (ReadingsVal($name, "mute", "") eq "on" ? "off" : "on"), 1 );
             }
             elsif ( $a[2] eq "off" ) {
                 #$result = BRAVIA_SendCommand( $hash, "MuteOff" )
                 $result = BRAVIA_SendCommand( $hash, "upnp", "setMute:0" );
                 readingsSingleUpdate( $hash, "mute", $a[2], 1 )
-                   if ( $hash->{READINGS}{mute}{VAL} ne $a[2] );
+                   if ( ReadingsVal($name, "mute", "") ne $a[2] );
             }
             elsif ( $a[2] eq "on" ) {
                 #$result = BRAVIA_SendCommand( $hash, "MuteOn" )
                 $result = BRAVIA_SendCommand( $hash, "upnp", "setMute:1" );
                 readingsSingleUpdate( $hash, "mute", $a[2], 1 )
-                   if ( $hash->{READINGS}{mute}{VAL} ne $a[2] );
+                   if ( ReadingsVal($name, "mute", "") ne $a[2] );
             }
             else {
                 return "Unknown argument " . $a[2];
@@ -375,7 +370,7 @@ sub BRAVIA_Set($@) {
     elsif ( lc( $a[1] ) eq "remotecontrol" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1] . " " . $a[2];
 
-        if ( $hash->{READINGS}{state}{VAL} ne "absent" ) {
+        if ( $state ne "absent" ) {
             if ( !defined( $a[2] ) ) {
                 my $commandKeys = "";
                 for (
@@ -430,8 +425,8 @@ sub BRAVIA_Set($@) {
     # channel
     elsif ( $a[1] eq "channel" ) {
         if (   defined( $a[2] )
-            && $hash->{READINGS}{presence}{VAL} eq "present"
-            && $hash->{READINGS}{state}{VAL} ne "on" )
+            && ReadingsVal($name, "presence", "") eq "present"
+            && $state ne "on" )
         {
             Log3 $name, 4, "BRAVIA $name: indirect switching request to ON";
             BRAVIA_Set( $hash, $name, "on" );
@@ -443,7 +438,7 @@ sub BRAVIA_Set($@) {
           "No argument given, choose one of channel presetNumber channelName "
           if ( !defined( $a[2] ) );
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             my $channelName = $a[2];
             if ( $channelName =~ /^(\d)(\d?)(\d?)(\d?):.*$/ ) {
               BRAVIA_SendCommand( $hash, "ircc", $1, "blocking" );
@@ -464,7 +459,7 @@ sub BRAVIA_Set($@) {
     elsif ( lc( $a[1] ) =~ /^(channelup|channeldown)$/ ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             if ( lc( $a[1] ) eq "channelup" ) {
                 $cmd = "CHANUP";
             }
@@ -481,8 +476,8 @@ sub BRAVIA_Set($@) {
     # input
     elsif ( $a[1] eq "input" ) {
         if (   defined( $a[2] )
-            && $hash->{READINGS}{presence}{VAL} eq "present"
-            && $hash->{READINGS}{state}{VAL} ne "on" )
+            && ReadingsVal($name, "presence", "") eq "present"
+            && $state ne "on" )
         {
             Log3 $name, 4, "BRAVIA $name: indirect switching request to ON";
             BRAVIA_Set( $hash, $name, "on" );
@@ -508,11 +503,11 @@ sub BRAVIA_Set($@) {
             return "Unknown source input '" . $a[2] . "' on that device.";
         }
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             BRAVIA_SendCommand( $hash, "sources/current",
                 '"id": ' . $input_id, $input_id );
 
-            if ( $hash->{READINGS}{input}{VAL} ne $a[2] ) {
+            if ( ReadingsVal($name, "input", "") ne $a[2] ) {
                 readingsSingleUpdate( $hash, "input", $a[2], 1 );
             }
         }
@@ -525,7 +520,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "tvpause" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             BRAVIA_SendCommand( $hash, "ircc", "TVPAUSE" );
         }
         else {
@@ -537,7 +532,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "pause" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             BRAVIA_SendCommand( $hash, "ircc", "PAUSE" );
         }
         else {
@@ -549,7 +544,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "play" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             BRAVIA_SendCommand( $hash, "ircc", "PLAY" );
         }
         else {
@@ -561,7 +556,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "stop" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             BRAVIA_SendCommand( $hash, "ircc", "STOP" );
         }
         else {
@@ -573,7 +568,7 @@ sub BRAVIA_Set($@) {
     elsif ( $a[1] eq "record" ) {
         Log3 $name, 2, "BRAVIA set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( $state eq "on" ) {
             BRAVIA_SendCommand( $hash, "ircc", "RECORD" );
         }
         else {
@@ -598,8 +593,7 @@ sub BRAVIA_Set($@) {
 
         Log3 $name, 2, "BRAVIA set $name " . $a[1] . " " . $a[2];
         readingsSingleUpdate( $hash, "requestFormat", $a[2], 1 )
-           if ( !defined($hash->{READINGS}{requestFormat}{VAL}) ||
-                $hash->{READINGS}{requestFormat}{VAL} ne $a[2] );
+           if ( ReadingsVal($name, "requestFormat", "") ne $a[2] );
     }
 
     # upnp
@@ -608,8 +602,7 @@ sub BRAVIA_Set($@) {
 
         Log3 $name, 2, "BRAVIA set $name " . $a[1] . " " . $a[2];
         readingsSingleUpdate( $hash, "upnp", $a[2], 1 )
-           if ( !defined($hash->{READINGS}{upnp}{VAL}) ||
-                $hash->{READINGS}{upnp}{VAL} ne $a[2] );
+           if ( ReadingsVal($name, "upnp", "") ne $a[2] );
     }
 
     # return usage hint
@@ -643,6 +636,10 @@ sub BRAVIA_Define($$) {
     # use interval of 45 sec if not defined
     my $interval = $a[3] || 45;
     $hash->{INTERVAL} = $interval;
+    
+    # number of channels read from channellist, maximum 50
+    my $channelCount = 50;
+    $hash->{CHANNELCOUNT} = $channelCount;
 
     $hash->{helper}{PORT} = {
         'IRCC'    => "80",
@@ -652,14 +649,11 @@ sub BRAVIA_Define($$) {
     
     $hash->{helper}{HEADER} = 'X-CERS-DEVICE-ID: fhem_remote';
     
-    $hash->{name} = $hash->{READINGS}{name}{VAL}
-      if ( defined( $hash->{READINGS}{name}{VAL} ) );
+    $hash->{name} = ReadingsVal($name, "name", "");
 
-    $hash->{modelName} = $hash->{READINGS}{modelName}{VAL}
-      if ( defined( $hash->{READINGS}{modelName}{VAL} ) );
+    $hash->{modelName} = ReadingsVal($name, "modelName", "");
 
-    $hash->{generation} = $hash->{READINGS}{generation}{VAL}
-      if ( defined( $hash->{READINGS}{generation}{VAL} ) );
+    $hash->{generation} = ReadingsVal($name, "generation", "");
 
     unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
         $attr{$name}{webCmd} = 'volume:channelUp:channelDown';
@@ -778,11 +772,23 @@ sub BRAVIA_SendCommand($$;$$) {
       } else {
         $URL .= "/cersEx/api/" . $service;
       }
-    } elsif ($service eq "getContentList") {
+    } elsif ($service eq "getContentCount") {
       $URL .= $port->{SERVICE};
       if ($requestFormat eq "json") {
         $URL .= "/sony/avContent";
-        $data = "{\"method\":\"getContentList\",\"params\":[{\"source\":\"" . $cmd . "\",\"type\":\"\",\"cnt\":50,\"stIdx\":\"\"}],\"id\":1,\"version\":\"1.2\"}";
+        $data = "{\"method\":\"getContentCount\",\"params\":[{\"source\":\"" . $cmd . "\",\"type\":\"\"}],\"id\":1,\"version\":\"1.0\"}";
+      }
+    } elsif ($service eq "getContentList") {
+      $URL .= $port->{SERVICE};
+      if ($requestFormat eq "json") {
+        my $source = $cmd;
+        my $index = 0;
+        if ($cmd =~ /^(.*)\|(\d+)$/){
+          $source = $1;
+          $index = $2;
+        }
+        $URL .= "/sony/avContent";
+        $data = "{\"method\":\"getContentList\",\"params\":[{\"source\":\"".$source."\",\"type\":\"\",\"cnt\":".$hash->{CHANNELCOUNT}.",\"stIdx\":".$index."}],\"id\":1,\"version\":\"1.0\"}";
       }
     } elsif ($service eq "getScheduleList") {
       $URL .= $port->{SERVICE};
@@ -1427,6 +1433,7 @@ sub BRAVIA_ProcessCommandData ($$) {
 
     # getContentList
     elsif ( $service eq "getContentList" ) {
+      my $channelIndex = 0;
       if ( ref($return) eq "HASH" ) {
         if (ref($return->{result}) eq "ARRAY") {
           foreach ( @{ $return->{result} } ) {
@@ -1443,6 +1450,8 @@ sub BRAVIA_ProcessCommandData ($$) {
                   $channelName =~ s/\s+$//;
                   $channelName =~ s/\s/_/g;
                   $channelName =~ s/,/./g;
+                } elsif ( $key eq "index" ) {
+                  $channelIndex = $_->{$key};
                 }
               }
               $hash->{helper}{device}{channelPreset}{ $channelNo }{id} = $channelNo;
@@ -1450,6 +1459,11 @@ sub BRAVIA_ProcessCommandData ($$) {
             }
           }
         }
+      }
+      # increment index, because it starts with 0
+      if (++$channelIndex % $hash->{CHANNELCOUNT} == 0) {
+        # try next junk of channels
+        BRAVIA_SendCommand( $hash, "getContentList", ReadingsVal($name, "input", "")."|".$channelIndex );
       }
     }
 
@@ -1947,6 +1961,9 @@ sub BRAVIA_CheckRegistration($) {
     <br><br>
   <a name="BRAVIAattr"></a>
   <b>Attributes</b> 
+  <ul><b>channelsMax</b>
+    <ul>Maximale Anzahl der im FHEMWEB angezeigten Kanäle. Der Standartwert ist 50.</ul>
+  </ul>
   <ul><b>macaddr</b>
     <ul>Ermöglicht das Einschalten des TV per WOL.</ul>
   </ul>
