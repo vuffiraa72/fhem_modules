@@ -1472,11 +1472,11 @@ sub BRAVIA_ProcessCommandData ($$) {
       if ( $header =~ /auth=([A-Za-z0-9]+)/ ) {
         readingsBulkUpdate( $hash, "authCookie", $1 );
       }
-      if ( $header =~ /expires=\w{3}, (\d{2}-\w{3}-\d{4} [0-2]\d:[0-5]\d:[0-5]\d)/ ) {
+      if ( $header =~ /[Ee]xpires=([^;]+)/ ) {
         readingsBulkUpdate( $hash, "authExpires", $1 );
       }
-      if ( $header =~ /Expires=\w{2}., (\d{2}) (\w{3}). (\d{4}) ([0-2]\d:[0-5]\d:[0-5]\d)/ ) {
-        readingsBulkUpdate( $hash, "authExpires", $1."-".$2."-".$3." ".$4 );
+      if ( $header =~ /[Mm]ax-[Aa]ge=(\d+)/ ) {
+        readingsBulkUpdate( $hash, "authMaxAge", $1 ) if (ReadingsVal($name, "authMaxAge", 0) != $1);
       }
     }
     
@@ -1838,20 +1838,19 @@ sub BRAVIA_CheckRegistration($) {
   my ( $hash ) = @_;
   my $name = $hash->{NAME};
 
-  my %mon2num = qw(
-      jan 1  feb 2  mar 3  apr 4  may 5  jun 6
-      jul 7  aug 8  sep 9  oct 10 nov 11 dec 12
-  );
+  if (ReadingsVal($name, "authCookie", "") ne "" and
+          ReadingsTimestamp($name, "authCookie", "") =~ m/^(\d{4})-(\d{2})-(\d{2}) ([0-2]\d):([0-5]\d):([0-5]\d)$/) {
 
-  if (defined $hash->{READINGS}{authExpires}{VAL}) {
-    if($hash->{READINGS}{authExpires}{VAL} =~ m/^(\d{2})-(\w{3})-(\d{4}) ([0-2]\d):([0-5]\d):([0-5]\d)$/) {
-        my $datetime = timelocal($6, $5, $4, $1, $mon2num{lc $2} - 1, $3 - 1900);
-        if ($datetime < time()) {
+      my $time = fhemTimeLocal($6, $5, $4, $3, $2 - 1, $1 - 1900);
+      # max age defaults to 14 days
+      my $maxAge = ReadingsNum($name, "authMaxAge", 1209600);
+  
+      # renew registration after half period of validity
+      if ($time + $maxAge/2 < time()) {
           Log3 $name, 3, "BRAVIA $name: renew registration";
           BRAVIA_SendCommand( $hash, "register", "renew" );
-        }
-    }
-  }  
+      }
+  }
 }
 
 1;
