@@ -788,7 +788,7 @@ sub BRAVIA_SendCommand($$;$$) {
           $index = $2;
         }
         $URL .= "/sony/avContent";
-        $data = "{\"method\":\"getContentList\",\"params\":[{\"source\":\"".$source."\",\"type\":\"\",\"cnt\":".$hash->{CHANNELCOUNT}.",\"stIdx\":".$index."}],\"id\":1,\"version\":\"1.0\"}";
+        $data = "{\"method\":\"getContentList\",\"params\":[{\"source\":\"".$source."\",\"type\":\"\",\"cnt\":".InternalVal($name, "CHANNELCOUNT", 50).",\"stIdx\":".$index."}],\"id\":1,\"version\":\"1.0\"}";
       }
     } elsif ($service eq "getScheduleList") {
       $URL .= $port->{SERVICE};
@@ -1461,7 +1461,7 @@ sub BRAVIA_ProcessCommandData ($$) {
         }
       }
       # increment index, because it starts with 0
-      if (++$channelIndex % $hash->{CHANNELCOUNT} == 0) {
+      if (++$channelIndex % InternalVal($name, "CHANNELCOUNT", 50) == 0) {
         # try next junk of channels
         BRAVIA_SendCommand( $hash, "getContentList", ReadingsVal($name, "input", "")."|".$channelIndex );
       }
