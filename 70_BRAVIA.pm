@@ -25,7 +25,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.5.0
+# Version: 0.5.1
 #
 # Major Version History:
 # 
@@ -1864,6 +1864,105 @@ sub BRAVIA_GetNormalizedName($) {
 
 <a name="BRAVIA"></a>
 <h3>BRAVIA</h3>
+<ul>
+  This module controls a Sony TV device over ethernet. Devices of series starting from 2011 are supported.
+  <br><br>
+  <b>Define</b>
+  <ul>
+    <code>define &lt;name&gt; BRAVIA &lt;ip-or-hostname&gt; [&lt;poll-interval&gt;]</code>
+    <br><br>
+    With definition of a BRAVIA device an internal task will be scheduled.
+    This task pulls frequently the status and other information from the TV.<br>
+    The intervall can be defined in seconds by an optional parameter &lt;poll-intervall&gt;.
+    The default value is 45 seconds.
+    <br><br>
+    After definition of a device using this module it has to be registered as a remote control
+    (<a href=#BRAVIAregister><code>set register</code></a>).
+    <br><br>
+    As long as readings are not among the usual AV readings they are clustered:
+    <table>
+      <tr><td>s_*</td><td>: status</td></tr>
+      <tr><td>ci_*</td><td>: content information</td></tr>
+    </table>
+    <br><br>
+    The module contains predefined layouts for <a href=#remotecontrol>remotecontrol</a> using PNG and SVG.
+    <br><br>
+  </ul>
+
+  <a name="BRAVIAset"></a>
+  <b>Set</b>
+  <ul>
+    <code>set &lt;name&gt; &lt;option&gt; &lt;value&gt;</code>
+    <br><br>
+    Options:
+    <ul>
+      <li><i>channel</i><br>
+        List of all known channels. The module collects all visited channels.
+        Channels can be loaded automtically with modells from 2013 and newer.
+        (number of channels, see <a href=#BRAVIAchannelsMax>channelsMax</a>).</li>
+      <li><i>channelDown</i><br>
+        Switches a channel back.</li>
+      <li><i>channelUp</i><br>
+        Switches a channel forward.</li>
+      <li><i>mute</i><br>
+        Set mute if <a href=#BRAVIAupnp>Upnp</a> is activated.</li>
+      <li><i>off</i><br>
+        Switches TV to off.</li>
+      <li><a name="BRAVIAon"></a><i>on</i><br>
+        Switches TV to on, with modells from 2013 using WOL.</li>
+      <li><i>pause</i><br>
+        Pauses a playing of a recording, of an internal App, etc.</li>
+      <li><i>play</i><br>
+        Starts playing of a recording, of an internal App, etc.</li>
+      <li><i>record</i><br>
+        Starts recording of current content.</li>
+      <li><a name="BRAVIAregister"></a><i>register</i><br>
+        One-time registration of Fhem as remote control in the TV.<br>
+        With <a href=#BRAVIArequestFormat>requestFormat</a> = "xml" registration works without parameter.<br>
+        With <a href=#BRAVIArequestFormat>requestFormat</a> = "json" registration has to be executed twice.<br>
+        The register option offers an additional input field:
+        <ol>
+          <li>Call with empty input. A PIN for registration has to be shown on the TV.</li>
+          <li>Insert PIN into input field and register again.</li></ol></li>
+      <li><a name="BRAVIArequestFormat"></a><i>requestFormat</i><br>
+        "xml" for xml based communication (modells from 2011 and 2012)<br>
+        "json" for communication with modells from 2013 and newer</li>
+      <li><i>remoteControl</i><br>
+        Sends command directly to TV.</li>
+      <li><i>statusRequest</i><br>
+        Retrieves current status information from TV.</li>
+      <li><i>stop</i><br>
+        Stops recording, playing of an internal App, etc.</li>
+      <li><i>toggle</i><br>
+        Toggles power status of TV.</li>
+      <li><i>tvpause</i><br>
+        Activates Timeshift mode.</li>
+      <li><a name="BRAVIAupnp"></a><i>upnp</i><br>
+        Activates Upnp service used to control volume.</li>
+      <li><i>volume</i><br>
+        Straight setting of volume. <a href=#BRAVIAupnp>Upnp</a> service has to be activated.</li>
+      <li><i>volumeDown</i><br>
+        Decreases volume.</li>
+      <li><i>volumeUp</i><br>
+        Increases volume.</li>
+    </ul>
+  </ul>
+  <br>
+  
+  <a name="BRAVIAattr"></a>
+  <b>Attributes</b>
+  <ul>
+    <code>attr &lt;name&gt; &lt;attribute&gt; &lt;value&gt;</code>
+    <br><br>
+    Attributes:
+    <ul>
+      <li><a name="BRAVIAchannelsMax"></a><i>channelsMax</i><br>
+        Maximum amount of channels to be displayed, default is 50.</li>
+      <li><a name="BRAVIAmacaddr"></a><i>macaddr</i><br>
+        Enables power on of TV using WOL.</li>
+    </ul>
+  </ul>
+</ul>
 
 =end html
 =begin html_DE
@@ -1894,82 +1993,79 @@ sub BRAVIA_GetNormalizedName($) {
     Das Modul enthält vorgefertigte Layouts für <a href=#remotecontrol>remotecontrol</a> mit PNG und SVG.
     <br><br>
   </ul>
+
   <a name="BRAVIAset"></a>
-  <b>Set</b> 
-    <ul><b>channel</b>
-      <ul>Liste alle bekannten Kanäle. Das Modul merkt sich alle aufgerufenen Kanäle.</ul>
-    </ul>
-    <ul><b>channelDown</b>
-      <ul></ul>
-    </ul>
-    <ul><b>channelUp</b>
-      <ul></ul>
-    </ul>
-    <ul><b>mute</b>
-      <ul>Direkte Stummschaltung erfolgt nur per aktiviertem <a href=#BRAVIAupnp>Upnp</a>.</ul>
-    </ul>
-    <ul><b>off</b>
-      <ul></ul>
-    </ul>
-    <ul><a name="BRAVIAon"></a><b>on</b>
-      <ul>Einschalten des TV per WOL, wenn das Attribute <a href=BRAVIAmacaddr>macaddr</a> gesetzt ist.</ul>
-    </ul>
-    <ul><b>pause</b>
-      <ul></ul>
-    </ul>
-    <ul><b>play</b>
-      <ul></ul>
-    </ul>
-    <ul><b>record</b>
-      <ul></ul>
-    </ul>
-    <ul><a name="BRAVIAregister"></a><b>register</b>
-      <ul>Einmalige Registrierung von FHEM als Fernbedienung im TV.</ul>
-      <ul>Bei <a href=#BRAVIArequestFormat>requestFormat</a> = "xml" erfolgt die Registrierung ohne Parameter.</ul>
-      <ul>Bei <a href=#BRAVIArequestFormat>requestFormat</a> = "json" ist die Registrierung zweistufig.
-          Beim Aufruf des Setter gibt es ein Eingabefeld:<br>
-          Aufruf mit leerem Eingabefeld. Auf dem TV sollte eine PIN zur Registrierung erscheinen.<br>
-          PIN im Eingabefeld eintragen und Registrierung noch mal ausführen</ul>
-    </ul>
-    <ul><a name="BRAVIArequestFormat"></a><b>requestFormat</b>
-      <ul>"xml" für xml-basierte Kommunikation 2011er/2012er Geräte</ul>
-      <ul>"json" für die Kommunikation seit der 2013er Generation</ul>
-    </ul>
-    <ul><b>remoteControl</b>
-      <ul>Direktes Senden von Kommandos an den TV.</ul>
-    </ul>
-    <ul><b>statusRequest</b>
-      <ul></ul>
-    </ul>
-    <ul><b>stop</b>
-      <ul></ul>
-    </ul>
-    <ul><b>toggle</b>
-      <ul>Wechselt den Einschaltstatus des TV.</ul>
-    </ul>
-    <ul><b>tvpause</b>
-      <ul>Aktiviert Timeshift.</ul>
-    </ul>
-    <ul><a name="BRAVIAupnp"></a><b>upnp</b>
-      <ul>Aktiviert Upnp zum Abfragen und Stellen der Lautstärke.</ul>
-    </ul>
-    <ul><b>volume</b>
-      <ul>Direktes Setzen der Lautstärke erfolgt nur per aktiviertem <a href=#BRAVIAupnp>Upnp</a>.</ul>
-    </ul>
-    <ul><b>volumeDown</b>
-      <ul></ul>
-    </ul>
-    <ul><b>volumeUp</b>
-      <ul></ul>
-    </ul>
+  <b>Set</b>
+  <ul>
+    <code>set &lt;name&gt; &lt;option&gt; &lt;value&gt;</code>
     <br><br>
-  <a name="BRAVIAattr"></a>
-  <b>Attributes</b> 
-  <ul><b>channelsMax</b>
-    <ul>Maximale Anzahl der im FHEMWEB angezeigten Kanäle. Der Standartwert ist 50.</ul>
+    Optionen:
+    <ul>
+      <li><i>channel</i><br>
+        Liste alle bekannten Kanäle. Das Modul merkt sich alle aufgerufenen Kanäle.
+        Ab Modelljahr 2013 werden die Kanäle automatisch geladen
+        (Anzahl siehe <a href=#BRAVIAchannelsMax>channelsMax</a>).</li>
+      <li><i>channelDown</i><br>
+        Einen Kanal zurück schalten.</li>
+      <li><i>channelUp</i><br>
+        Einen Kanal weiter schalten.</li>
+      <li><i>mute</i><br>
+        Direkte Stummschaltung erfolgt nur per aktiviertem <a href=#BRAVIAupnp>Upnp</a>.</li>
+      <li><i>off</i><br>
+        Schaltet den TV aus.</li>
+      <li><a name="BRAVIAon"></a><i>on</i><br>
+        Einschalten des TV, ab Modelljahr 2013 per WOL.</li>
+      <li><i>pause</i><br>
+        Pausiert die Wiedergabe einer Aufnahme, einer internen App, etc.</li>
+      <li><i>play</i><br>
+        Startet die Wiedergabe einer Aufnahme, einer internen App, etc.</li>
+      <li><i>record</i><br>
+        Startet die Aufnahme des aktuellen Inhalts.</li>
+      <li><a name="BRAVIAregister"></a><i>register</i><br>
+        Einmalige Registrierung von FHEM als Fernbedienung im TV.<br>
+        Bei <a href=#BRAVIArequestFormat>requestFormat</a> = "xml" erfolgt die Registrierung ohne Parameter.<br>
+        Bei <a href=#BRAVIArequestFormat>requestFormat</a> = "json" ist die Registrierung zweistufig.<br>
+        Beim Aufruf des Setter gibt es ein Eingabefeld:
+        <ol>
+          <li>Aufruf mit leerem Eingabefeld. Auf dem TV sollte eine PIN zur Registrierung erscheinen.</li>
+          <li>PIN im Eingabefeld eintragen und Registrierung noch mal ausführen</li></ol></li>
+      <li><a name="BRAVIArequestFormat"></a><i>requestFormat</i><br>
+        "xml" für xml-basierte Kommunikation 2011er/2012er Geräte<br>
+        "json" für die Kommunikation seit der 2013er Generation</li>
+      <li><i>remoteControl</i><br>
+        Direktes Senden von Kommandos an den TV.</li>
+      <li><i>statusRequest</i><br>
+        Ruft die aktuellen Statusinformationen vom TV ab.</li>
+      <li><i>stop</i><br>
+        Stoppt die Wiedergabe einer Aufnahme, einer internen App, etc.</li>
+      <li><i>toggle</i><br>
+        Wechselt den Einschaltstatus des TV.</li>
+      <li><i>tvpause</i><br>
+        Aktiviert den Timeshift-Modus.</li>
+      <li><a name="BRAVIAupnp"></a><i>upnp</i><br>
+        Aktiviert Upnp zum Abfragen und Einstellen der Lautstärke.</li>
+      <li><i>volume</i><br>
+        Direktes Setzen der Lautstärke erfolgt nur per aktiviertem <a href=#BRAVIAupnp>Upnp</a>.</li>
+      <li><i>volumeDown</i><br>
+        Verringert die Lautstärke.</li>
+      <li><i>volumeUp</i><br>
+        Erhöht die Lautstärke.</li>
+    </ul>
   </ul>
-  <ul><b>macaddr</b>
-    <ul>Ermöglicht das Einschalten des TV per WOL.</ul>
+  <br>
+  
+  <a name="BRAVIAattr"></a>
+  <b>Attributes</b>
+  <ul>
+    <code>attr &lt;name&gt; &lt;attribute&gt; &lt;value&gt;</code>
+    <br><br>
+    Attribute:
+    <ul>
+      <li><a name="BRAVIAchannelsMax"></a><i>channelsMax</i><br>
+        Maximale Anzahl der im FHEMWEB angezeigten Kanäle. Der Standartwert ist 50.</li>
+      <li><a name="BRAVIAmacaddr"></a><i>macaddr</i><br>
+        Ermöglicht das Einschalten des TV per WOL.</li>
+    </ul>
   </ul>
 </ul>
 
