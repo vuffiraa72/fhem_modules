@@ -4,7 +4,6 @@
 #     70_BRAVIA.pm
 #     An FHEM Perl module for controlling Sony Televisons
 #     via network connection. Supported are models with release date starting from 2011.
-#     inspired by Philips Televisions Module from Julian Pawlowski <julian.pawlowski at gmail.com>
 #
 #     Copyright by Ulf von Mersewsky
 #     e-mail: umersewsky at gmail.com
@@ -24,11 +23,6 @@
 #     You should have received a copy of the GNU General Public License
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
-#
-# Version: 0.5.1
-#
-# Major Version History:
-# 
 ##############################################################################
 
 package main;
