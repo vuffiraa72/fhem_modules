@@ -2,7 +2,7 @@
 ##############################################################################
 #
 #     70_BOTVAC.pm
-#     An FHEM Perl module for controlling
+#     An FHEM Perl module for controlling a Neato BotVacConnected.
 #
 #     Copyright by Ulf von Mersewsky
 #     e-mail: umersewsky at gmail.com
@@ -121,11 +121,12 @@ sub BOTVAC_Set($@) {
     return "No Argument given" if ( !defined( $a[1] ) );
 
     my $usage = "Unknown argument " . $a[1] . ", choose one of";
-    $usage .= " start:noArg"      if ( ReadingsVal($name, ".start", "0") );
-    $usage .= " stop:noArg"       if ( ReadingsVal($name, ".stop", "0") );
-    $usage .= " pause:noArg"      if ( ReadingsVal($name, ".pause", "0") );
-    $usage .= " resume:noArg"     if ( ReadingsVal($name, ".resume", "0") );
-    $usage .= " sendToBase:noArg" if ( ReadingsVal($name, ".goToBase", "0") );
+    $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
+    $usage .= " startSpot:Eco,Turbo"     if ( ReadingsVal($name, ".start", "0") );
+    $usage .= " stop:noArg"              if ( ReadingsVal($name, ".stop", "0") );
+    $usage .= " pause:noArg"             if ( ReadingsVal($name, ".pause", "0") );
+    $usage .= " resume:noArg"            if ( ReadingsVal($name, ".resume", "0") );
+    $usage .= " sendToBase:noArg"        if ( ReadingsVal($name, ".goToBase", "0") );
     $usage .= " schedule:on,off";
 
     my $cmd = '';
@@ -133,10 +134,30 @@ sub BOTVAC_Set($@) {
 
 
     # start
-    if ( $a[1] eq "start" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+    if ( $a[1] eq "startCleaning" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
 
-        BOTVAC_SendCommand( $hash, "messages", "startCleaning" );
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        my $params = {
+          "category"  => "2",
+          "mode"      => $a[2] eq "Eco" ? "1" : "2",
+          "modifier"  => "1"
+        };
+        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params );
+    }
+
+    elsif ( $a[1] eq "startSpot" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        my $params = {
+          "category"  => "3",
+          "mode"      => $a[2] eq "Eco" ? "1" : "2",
+          "modifier"  => "1"
+        };
+        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params );
     }
 
     # stop
@@ -241,8 +262,8 @@ sub BOTVAC_Define($$) {
 ############################################################################################################
 
 ###################################
-sub BOTVAC_SendCommand($$;$) {
-    my ( $hash, $service, $cmd ) = @_;
+sub BOTVAC_SendCommand($$;$$) {
+    my ( $hash, $service, $cmd, $params ) = @_;
     my $name        = $hash->{NAME};
     my $email       = $hash->{helper}{EMAIL};
     my $password    = $hash->{helper}{PASSWORD};
@@ -267,6 +288,7 @@ sub BOTVAC_SendCommand($$;$) {
     else {
         Log3 $name, 4, "BOTVAC $name: REQ $service/$cmd";
     }
+    Log3 $name, 4, "BOTVAC $name: REQ parameters $params" if (defined($params));
 
     $header = "Accept: application/vnd.neato.nucleo.v1";
     $header .= "\r\nContent-Type: application/json";
@@ -285,7 +307,15 @@ sub BOTVAC_SendCommand($$;$) {
       return if ($serial eq "");
 
       $URL = "https://nucleo.neatocloud.com/vendors/neato/robots/$serial/messages";
-      $data = "{\"reqId\":\"1\",\"cmd\":\"$cmd\"}";
+      $data = "{\"reqId\":\"1\",\"cmd\":\"$cmd\"";
+      if (defined($params)) {
+        $data .= ",\"params\":{";
+        foreach( keys $params ) {
+          $data .= "\"$_\":\"$params->{$_}\""; 
+        }
+        $data .= "}";
+      }
+      $data .= "}";
 
       my $date = gmtime();
       my $message = join("\n", (lc($serial), $date, $data));
@@ -423,7 +453,7 @@ sub BOTVAC_ReceiveCommand($$$) {
               BOTVAC_ReadingsBulkUpdateIfChanged(
                   $hash,
                   "state",
-                  BOTVAC_BuildState($hash, $return->{stateId}, $return->{action}, $return->{error}));
+                  BOTVAC_BuildState($hash, $return->{state}, $return->{action}, $return->{error}));
             }
           } elsif ( $cmd eq "getSchedule" ) {
             if ( ref($return->{data}) eq "HASH" ) {
@@ -512,7 +542,7 @@ sub BOTVAC_BuildState($$$$) {
         '1'       => "Ready",
         '2'       => "Action",
         '3'       => "Paused",
-        '4'       => "Error",
+        '4'       => "Error"
     };
 
     if ($state == 2) {
@@ -535,7 +565,7 @@ sub BOTVAC_GetActionText($) {
         '1'       => "Cleaning",
         '2'       => "Spot Cleaning",
         '4'       => "Go to Base",
-        '5'       => "Setup",
+        '5'       => "Setup"
     };
 
     if (defined( $actions->{$action})) {
@@ -557,7 +587,7 @@ sub BOTVAC_GetErrorText($) {
         'ui_error_dust_bin_emptied'       => 'Dust Bin Has Been Emptied!',
         'ui_error_dust_bin_missing'       => 'Dust Bin Is Missing!',
         'ui_error_navigation_falling'     => 'Please Clear My Path!',
-        'ui_error_navigation_noprogress'  => 'Please Clear My Path!',
+        'ui_error_navigation_noprogress'  => 'Please Clear My Path!'
     };
 
     if (defined( $errors->{$error})) {
