@@ -32,15 +32,9 @@ package main;
 use 5.012;
 use strict;
 use warnings;
-use Data::Dumper;
 use Time::HiRes qw(gettimeofday);
-use Time::Local;
 use HttpUtils;
-use SetExtensions;
-use Encode;
 use JSON qw(decode_json);
-use MIME::Base64;
-use IO::Socket;
 use IO::Socket::SSL::Utils qw(PEM_string2cert);
 use Digest::SHA qw(hmac_sha256_hex);
 
