@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.0
+# Version: 0.1.1
 #
 ##############################################################################
 
@@ -234,8 +234,8 @@ sub BOTVAC_Define($$) {
     my $password = $a[3];
     $hash->{helper}{PASSWORD} = $password;
     
-    # use interval of 45 sec if not defined
-    my $interval = $a[4] || 45;
+    # use interval of 85 sec if not defined
+    my $interval = $a[4] || 85;
     $hash->{INTERVAL} = $interval;
 
     unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
@@ -262,9 +262,9 @@ sub BOTVAC_SendCommand($$;$$) {
     my $email       = $hash->{helper}{EMAIL};
     my $password    = $hash->{helper}{PASSWORD};
     my $timestamp   = gettimeofday();
+    my $timeout     = 15;
     my $header;
     my $data;
-    my $timeout;
 
     Log3 $name, 5, "BOTVAC $name: called function BOTVAC_SendCommand()";
 
@@ -321,12 +321,6 @@ sub BOTVAC_SendCommand($$;$$) {
       %sslArgs = ( SSL_ca =>  [ BOTVAC_GetCAKey( ) ] );
     }
 
-    if ( defined( $attr{$name}{timeout} ) && $attr{$name}{timeout} =~ /^\d+$/ ) {
-      $timeout = $attr{$name}{timeout};
-    } else {
-      $timeout = 30;
-    }
-
     # send request via HTTP-POST method
     Log3 $name, 5, "BOTVAC $name: POST $URL (" . urlDecode($data) . ")"
       if ( defined($data) );
@@ -372,39 +366,39 @@ sub BOTVAC_ReceiveCommand($$$) {
     # device not reachable
     if ($err) {
 
-        Log3 $name, 4, "BOTVAC $name: RCV TIMEOUT $service";
         if ( !defined($cmd) || $cmd eq "" ) {
-            Log3 $name, 4, "BRAVIA $name: RCV TIMEOUT $service";
+            Log3 $name, 4, "BOTVAC $name:$service RCV $err";
         } else {
-            Log3 $name, 4, "BRAVIA $name: RCV TIMEOUT $service/$cmd";
+            Log3 $name, 4, "BOTVAC $name:$service/$cmd RCV $err";
         }
 
-        BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "state", "Error" );
+        # keep last state
+        #BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "state", "Error" );
     }
 
     # data received
     elsif ($data) {
       
         if ( !defined($cmd) ) {
-            Log3 $name, 4, "BRAVIA $name: RCV $service";
+            Log3 $name, 4, "BOTVAC $name: RCV $service";
         } else {
-            Log3 $name, 4, "BRAVIA $name: RCV $service/$cmd";
+            Log3 $name, 4, "BOTVAC $name: RCV $service/$cmd";
         }
 
         if ( $data ne "" ) {
             if ( $data =~ /^{/ || $data =~ /^\[/ ) {
                 if ( !defined($cmd) || $cmd eq "" ) {
-                    Log3 $name, 4, "BRAVIA $name: RES $service - $data";
+                    Log3 $name, 4, "BOTVAC $name: RES $service - $data";
                 } else {
-                    Log3 $name, 4, "BRAVIA $name: RES $service/$cmd - $data";
+                    Log3 $name, 4, "BOTVAC $name: RES $service/$cmd - $data";
                 }
                 $return = decode_json( Encode::encode_utf8($data) );
             } else {
                 Log3 $name, 5, "BOTVAC $name: RES ERROR $service\n" . $data;
                 if ( !defined($cmd) || $cmd eq "" ) {
-                    Log3 $name, 5, "BRAVIA $name: RES ERROR $service\n$data";
+                    Log3 $name, 5, "BOTVAC $name: RES ERROR $service\n$data";
                 } else {
-                    Log3 $name, 5, "BRAVIA $name: RES ERROR $service/$cmd\n$data";
+                    Log3 $name, 5, "BOTVAC $name: RES ERROR $service/$cmd\n$data";
                 }
                 return undef;
             }
