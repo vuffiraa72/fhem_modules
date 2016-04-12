@@ -137,7 +137,7 @@ sub INDEGO_Set($@) {
           "mode"      => $a[2] eq "Eco" ? "1" : "2",
           "modifier"  => "1"
         };
-        INDEGO_SendCommand( $hash, "messages", "startCleaning", $params );
+        INDEGO_SendCommand( $hash, "messages", "startCleaning" );
     }
 
     elsif ( $a[1] eq "startSpot" ) {
@@ -150,7 +150,7 @@ sub INDEGO_Set($@) {
           "mode"      => $a[2] eq "Eco" ? "1" : "2",
           "modifier"  => "1"
         };
-        INDEGO_SendCommand( $hash, "messages", "startCleaning", $params );
+        INDEGO_SendCommand( $hash, "messages", "startCleaning" );
     }
 
     # stop
@@ -255,8 +255,8 @@ sub INDEGO_Define($$) {
 ############################################################################################################
 
 ###################################
-sub INDEGO_SendCommand($$;$$) {
-    my ( $hash, $service, $cmd, $params ) = @_;
+sub INDEGO_SendCommand($$;$) {
+    my ( $hash, $service, $type ) = @_;
     my $name        = $hash->{NAME};
     my $email       = $hash->{helper}{EMAIL};
     my $password    = $hash->{helper}{PASSWORD};
@@ -273,13 +273,7 @@ sub INDEGO_SendCommand($$;$$) {
     
     INDEGO_CheckContext($hash) if ($service ne "authenticate");
 
-    if ( !defined($cmd) ) {
-        Log3 $name, 4, "INDEGO $name: REQ $service";
-    }
-    else {
-        Log3 $name, 4, "INDEGO $name: REQ $service/$cmd";
-    }
-    Log3 $name, 4, "INDEGO $name: REQ parameters $params" if (defined($params));
+    Log3 $name, 4, "INDEGO $name: REQ $service";
 
     if ($service eq "authenticate") {
       $URL .= $service;
@@ -309,20 +303,35 @@ sub INDEGO_SendCommand($$;$$) {
     Log3 $name, 5, "INDEGO $name: header $header"
       if ( defined($header) );
 
-    HttpUtils_NonblockingGet(
-        {
-            url         => $URL,
-            timeout     => $timeout,
-            noshutdown  => 1,
-            header      => $header,
-            data        => $data,
-            hash        => $hash,
-            service     => $service,
-            cmd         => $cmd,
-            timestamp   => $timestamp,
-            callback    => \&INDEGO_ReceiveCommand,
-        }
-    );
+    if ( defined($type) && $type eq "blocking" ) {
+      my ($err, $data) = HttpUtils_BlockingGet(
+          {
+              url         => $URL,
+              timeout     => 15,
+              noshutdown  => 1,
+              header      => $header,
+              data        => $data,
+              hash        => $hash,
+              service     => $service,
+              timestamp   => $timestamp,
+          }
+      );
+      return $data;
+    } else {
+      HttpUtils_NonblockingGet(
+          {
+              url         => $URL,
+              timeout     => $timeout,
+              noshutdown  => 1,
+              header      => $header,
+              data        => $data,
+              hash        => $hash,
+              service     => $service,
+              timestamp   => $timestamp,
+              callback    => \&INDEGO_ReceiveCommand,
+          }
+      );
+    }
 
     return;
 }
@@ -434,6 +443,11 @@ sub INDEGO_ReceiveCommand($$$) {
             Log3 $name, 2, "INDEGO $name: ERROR: method to handle response of $service not implemented";
         }
 
+    } else {
+        if ($rc =~ /401 Authentication was not successful/) {
+            Log3 $name, 4, "INDEGO $name: renew authentication context"; 
+            INDEGO_CheckContext($hash, "renew");
+        }
     }
 
     readingsEndUpdate( $hash, 1 );
@@ -454,11 +468,12 @@ sub INDEGO_Undefine($$) {
     return;
 }
 
-sub INDEGO_CheckContext($) {
-  my ( $hash ) = @_;
+sub INDEGO_CheckContext($;$) {
+  my ( $hash, $renew ) = @_;
   my $name = $hash->{NAME};
 
-  INDEGO_SendCommand($hash, "authenticate") if (ReadingsVal($name, "contextId", "") eq "");
+  INDEGO_SendCommand($hash, "authenticate")
+      if (ReadingsVal($name, "contextId", "") eq "" or defined($renew));
 }
 
 sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
@@ -529,44 +544,18 @@ sub INDEGO_GetErrorText($) {
     }
 }
 
-sub INDEGO_ShowMap($) {
-    my ($name) = @_;
+sub INDEGO_ShowMap($;$$) {
+    my ($name,$width,$height) = @_;
     my $hash = $main::defs{$name};
 
-    INDEGO_SendCommand($hash, "map");
-}
+    $width  = 800 if (!defined($width));
+    $height = 440 if (!defined($height));
 
-sub INDEGO_GetCAKey() {
-    my $ca_key = q{-----BEGIN CERTIFICATE-----
-MIIE3DCCA8SgAwIBAgIJALHphD11lrmHMA0GCSqGSIb3DQEBBQUAMIGkMQswCQYD
-VQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNVBAcTBk5ld2FyazEbMBkGA1UEChMS
-TmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQLEw5DbG91ZCBTZXJ2aWNlczEZMBcG
-A1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQGCSqGSIb3DQEJARYXY2xvdWRAbmVh
-dG9yb2JvdGljcy5jb20wHhcNMTUwNDIxMTA1OTA4WhcNNDUwNDEzMTA1OTA4WjCB
-pDELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAkNBMQ8wDQYDVQQHEwZOZXdhcmsxGzAZ
-BgNVBAoTEk5lYXRvIFJvYm90aWNzIEluYzEXMBUGA1UECxMOQ2xvdWQgU2Vydmlj
-ZXMxGTAXBgNVBAMUECoubmVhdG9jbG91ZC5jb20xJjAkBgkqhkiG9w0BCQEWF2Ns
-b3VkQG5lYXRvcm9ib3RpY3MuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB
-CgKCAQEAur0WFcJ2YvnL3dtXJFv3lfCQtELLHVcux88tH7HN/FTeUvCqdleDNv4S
-mXWgxVOdUUuhV885wppYyXNzDDrwCyjPmYj0m1EZ4FqTCcjFmk+xdEJsPsKPgRt5
-QqaO0CA/T7dcIhT/PtQnJtcjn6E6vt2JLhsLz9OazadwjvdkejmfrOL643FGxsIP
-8hu3+JINcfxnmff85zshe0yQH5yIYkmQGUPQz061T6mMzFrED/hx9zDpiB1mfkUm
-uG3rBVcZWtrdyMvqB9LB1vqKgcCRANVg5S0GKpySudFlHOZjekXwBsZ+E6tW53qx
-hvlgmlxX80aybYC5hQaNSQBaV9N4lwIDAQABo4IBDTCCAQkwHQYDVR0OBBYEFM3g
-l7v7HP6zQgF90eHIl9coH6jhMIHZBgNVHSMEgdEwgc6AFM3gl7v7HP6zQgF90eHI
-l9coH6jhoYGqpIGnMIGkMQswCQYDVQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNV
-BAcTBk5ld2FyazEbMBkGA1UEChMSTmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQL
-Ew5DbG91ZCBTZXJ2aWNlczEZMBcGA1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQG
-CSqGSIb3DQEJARYXY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQCx6YQ9dZa5hzAM
-BgNVHRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQB93p+MUmKH+MQI3pEVvPUW
-y+VDB5qt1spE5J0awVwUzhQ7QXkEqgFfOk0kzufvxdha9wz+05E1glQ8l5CzlATu
-kA7V5OsygYB+TgqjvhfFHkSI6TJ8OlKcAJuZ2yQE8s2+LVo92NLwpooZLA6BCahn
-fX+rzmo6b4ylhyX98Tm3upINNH3whV355PJFgk74fw9N7U6cFlBrqXXssKOse2D2
-xY65IK7OQxSq5K5OPFLwN3h/eURo5kwl7jhpJhJbFL4I46OkpgqWHxQEqSxQnS0d
-AC62ApwWkm42i0/DGODms2tnGL/DaCiTkgEE+8EEF9kfvQDtMoUDNvIkl7Vvm914
------END CERTIFICATE-----};
-
-    return PEM_string2cert($ca_key);
+    my $map = INDEGO_SendCommand($hash, "map", "blocking");
+    my $html = '<svg style="width:'.$width.'px; height:'.$height.'px;"';
+    $html .= substr($map, 4);
+    
+    return $html;
 }
 
 1;
