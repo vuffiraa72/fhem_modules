@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.0
+# Version: 0.1.2
 #
 ##############################################################################
 
@@ -91,14 +91,22 @@ sub INDEGO_Get($@) {
 
     $what = $a[1];
 
-    if ( $what =~ /^(charge)$/ ) {
-        if ( defined( $hash->{READINGS}{$what}{VAL} ) ) {
-            return $hash->{READINGS}{$what}{VAL};
+    if ( $what =~ /^(mapsvgcache)$/ ) {
+        my $value = ReadingsVal($name, $what, "");
+        if ($value eq "") {
+          $value = ReadingsVal($name, ".$what", "");
+          eval { require Compress::Zlib; };
+          unless($@) {
+            $value = Compress::Zlib::uncompress($value);
+          }
+        }
+        if ( $value ne "" ) {
+            return $value;
         } else {
             return "no such reading: $what";
         }
     } else {
-        return "Unknown argument $what, choose one of charge:noArg";
+        return "Unknown argument $what, choose one of mapsvgcache:noArg";
     }
 }
 
@@ -111,7 +119,7 @@ sub INDEGO_Set($@) {
 
     return "No Argument given" if ( !defined( $a[1] ) );
 
-    my $usage = "Unknown argument " . $a[1] . ", choose one of mow:noArg pause:noArg returnToDock:noArg";
+    my $usage = "Unknown argument " . $a[1] . ", choose one of mow:noArg pause:noArg returnToDock:noArg reloadMap:noArg";
 
     my $cmd = '';
     my $result;
@@ -136,6 +144,13 @@ sub INDEGO_Set($@) {
         Log3 $name, 2, "INDEGO set $name " . $a[1];
 
         INDEGO_SendCommand( $hash, "state", "returnToDock" );
+    }
+
+    # reloadMap
+    elsif ( $a[1] eq "reloadMap" ) {
+        Log3 $name, 2, "INDEGO set $name " . $a[1];
+
+        INDEGO_SendCommand( $hash, "map" );
     }
 
     # return usage hint
@@ -319,6 +334,13 @@ sub INDEGO_ReceiveCommand($$$) {
                     Log3 $name, 4, "INDEGO $name: RES $service/$cmd - $data";
                 }
                 $return = decode_json( Encode::encode_utf8($data) );
+            } elsif ( $service = "map" ) {
+                if ( !defined($cmd) || $cmd eq "" ) {
+                    Log3 $name, 4, "INDEGO $name: RES $service - $data";
+                } else {
+                    Log3 $name, 4, "INDEGO $name: RES $service/$cmd - $data";
+                }
+                $return = $data;
             } else {
                 Log3 $name, 5, "INDEGO $name: RES ERROR $service\n" . $data;
                 if ( !defined($cmd) || $cmd eq "" ) {
@@ -333,11 +355,11 @@ sub INDEGO_ReceiveCommand($$$) {
         # state
         if ( $service eq "state" ) {
           if ( ref($return) eq "HASH" ) {
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "stateId",              $return->{state});
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",                $return->{mowed});
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",             FmtDateTime(int($return->{mowed_ts}/1000)));
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts",       FmtDateTime(int($return->{mapsvgcache_ts}/1000)));
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "map_update_available", $return->{map_update_available});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "state",          INDEGO_BuildState($hash, $return->{state}));
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",          $return->{mowed});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",       FmtDateTime(int($return->{mowed_ts}/1000)));
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts", FmtDateTime(int($return->{mapsvgcache_ts}/1000)));
+            #INDEGO_ReadingsBulkUpdateIfChanged($hash, "map_update_available", $return->{map_update_available});
             if ( ref($return->{runtime}) eq "HASH" ) {
               my $runtime = $return->{runtime};
               if ( ref($runtime->{total}) eq "HASH" ) {
@@ -356,9 +378,9 @@ sub INDEGO_ReceiveCommand($$$) {
               }
             }
             readingsEndUpdate( $hash, 1 );
-            if (ReadingsVal($name, "firmware", "") eq "") {
-              INDEGO_SendCommand($hash, "metadata");
-            }
+
+            INDEGO_SendCommand($hash, "map") if ($return->{map_update_available});
+            INDEGO_SendCommand($hash, "metadata") if (ReadingsVal($name, "firmware", "") eq "");
           }
         }
     
@@ -372,6 +394,18 @@ sub INDEGO_ReceiveCommand($$$) {
 
             readingsEndUpdate( $hash, 1 );
           }
+        }
+
+        # map
+        elsif ( $service eq "map" ) {
+          my $map = $return;
+          eval { require Compress::Zlib; };
+          unless($@) {
+            $map = Compress::Zlib::compress($map);
+          }
+          INDEGO_ReadingsBulkUpdateIfChanged($hash, ".mapsvgcache", $map );
+
+          readingsEndUpdate( $hash, 1 );
         }
 
         # authenticate
@@ -436,83 +470,78 @@ sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
   readingsBulkUpdate($hash, $reading, $value) if (ReadingsVal($name, $reading, "") ne $value);
 }
 
-sub INDEGO_BuildState($$$$) {
-    my ($hash,$state,$action,$error) = @_;
+sub INDEGO_BuildState($$) {
+    my ($hash,$state) = @_;
     my $states = {
-        '1'       => "Ready",
-        '2'       => "Action",
-        '3'       => "Paused",
-        '4'       => "Error"
+           '0' => "Reading status",
+         '257' => "Charging",
+         '258' => "Docked",
+         '259' => "Docked - Software update",
+         '260' => "Docked",
+         '261' => "Docked",
+         '262' => "Docked - Loading map",
+         '263' => "Docked - Saving map",
+         '513' => "Mowing",
+         '514' => "Relocalising",
+         '515' => "Loading map",
+         '516' => "Learning lawn",
+         '517' => "Paused",
+         '518' => "Border cut",
+         '519' => "Idle in lawn",
+         '769' => "Returning to dock",
+         '770' => "Returning to dock",
+         '771' => "Returning to dock - Battery low",
+         '772' => "Returning to dock - Calendar timeslot ended",
+         '773' => "Returning to dock - Battery temp range",
+         '774' => "Returning to dock",
+         '775' => "Returning to dock - Lawn complete",
+         '776' => "Returning to dock - Relocalising",
+        '1025' => "Diagnostic mode",
+        '1026' => "End of live",
+       ' 1281' => "Software update"
     };
 
-    if ($state == 2) {
-        return INDEGO_GetActionText($action);
-    } elsif ($state == 3) {
-        return "Paused: ".INDEGO_GetActionText($action);
-    } elsif ($state == 4) {
-      return INDEGO_GetErrorText($error);
-    } elsif (defined( $states->{$state})) {
+    if (defined( $states->{$state})) {
         return $states->{$state};
     } else {
         return $state;
     }
 }
 
-sub INDEGO_GetActionText($) {
-    my ($action) = @_;
-    my $actions = {
-        '0'       => "No Action",
-        '1'       => "Cleaning",
-        '2'       => "Spot Cleaning",
-        '4'       => "Go to Base",
-        '5'       => "Setup"
-    };
-
-    if (defined( $actions->{$action})) {
-        return $actions->{$action};
-    } else {
-        return $action;
-    }
-}
-
-sub INDEGO_GetErrorText($) {
-    my ($error) = @_;
-    my $errors = {
-        'ui_alert_invalid'                => 'Ok',
-        'ui_alert_dust_bin_full'          => 'Dust Bin Is Full!',
-        'ui_alert_recovering_location'    => 'I\'m Recovering My Location!',
-        'ui_error_picked_up'              => 'Picked Up!',
-        'ui_error_brush_stuck'            => 'Brush Stuck!',
-        'ui_error_stuck'                  => 'I\'m Stuck!',
-        'ui_error_dust_bin_emptied'       => 'Dust Bin Has Been Emptied!',
-        'ui_error_dust_bin_missing'       => 'Dust Bin Is Missing!',
-        'ui_error_navigation_falling'     => 'Please Clear My Path!',
-        'ui_error_navigation_noprogress'  => 'Please Clear My Path!'
-    };
-
-    if (defined( $errors->{$error})) {
-        return $errors->{$error};
-    } else {
-        return $error;
-    }
-}
 
 sub INDEGO_ShowMap($;$$) {
     my ($name,$width,$height) = @_;
     my $hash = $main::defs{$name};
-    my $html;
+    my $compress = 0;
+
+    eval { require Compress::Zlib; };
+    unless($@) {
+      $compress = 1;
+    } 
+
+    my $map = ReadingsVal($name, ".mapsvgcache", "");
+    my $data = $map;
 
     $width  = 800 if (!defined($width));
-    $height = 440 if (!defined($height));
+    $height = 600 if (!defined($height));
 
-    my $map = INDEGO_SendCommand($hash, "map", "blocking");
-    if (defined($map)) {
-      $html = '<svg style="width:'.$width.'px; height:'.$height.'px;"';
-      $html .= substr($map, 4);
+    if ($map eq "") {
+      $map = INDEGO_SendCommand($hash, "map", "blocking");
+      $data = $map;
+      $map = Compress::Zlib::compress($map) if ($compress);
+      readingsSingleUpdate($hash, ".mapsvgcache", $map, 1);
     } else {
-      $html = '<div>Map currently not available</div>';
+      $data = Compress::Zlib::uncompress($data) if ($compress);
     }
-    
+
+    if ($data =~ /viewBox="0 0 (\d+) (\d+)"/) {
+      my $factor = $1/$width;
+      $height = int($2/$factor);
+    }
+    my $html = '<svg style="width:'.$width.'px; height:'.$height.'px;"';
+    $html .= substr($data, 4);
+ 
+
     return $html;
 }
 
