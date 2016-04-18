@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.2
+# Version: 0.1.3
 #
 ##############################################################################
 
@@ -215,6 +215,7 @@ sub INDEGO_SendCommand($$;$) {
     my $timeout     = 30;
     my $header;
     my $data;
+    my $method;
 
     Log3 $name, 5, "INDEGO $name: called function INDEGO_SendCommand()";
 
@@ -235,7 +236,24 @@ sub INDEGO_SendCommand($$;$) {
       $header .= encode_base64("$email:$password","");
       $data = "{\"device\":\"\", \"os_type\":\"Android\", \"os_version\":\"4.0\", \"dvc_manuf\":\"unknown\", \"dvc_type\":\"unknown\"}";
 
-    } elsif ($service eq "state" || $service eq "map") {
+    } elsif ($service eq "state") {
+      $URL .= "alms/";
+      $URL .= ReadingsVal($name, "alm_sn", "");
+      $URL .= "/$service";
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+      if (defined($type)) {
+        $header .= "\r\nContent-Type: application/json";
+        $data = "{\"state\":\"".$type."\"}";
+        $method = "POST";
+      }
+
+    } elsif ($service eq "calendar") {
+      $URL .= "alms/";
+      $URL .= ReadingsVal($name, "alm_sn", "");
+      $URL .= "/$service";
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+
+    } elsif ($service eq "map") {
       $URL .= "alms/";
       $URL .= ReadingsVal($name, "alm_sn", "");
       $URL .= "/$service";
@@ -264,6 +282,7 @@ sub INDEGO_SendCommand($$;$) {
               noshutdown  => 1,
               header      => $header,
               data        => $data,
+              method      => $method,
               hash        => $hash,
               service     => $service,
               timestamp   => $timestamp,
@@ -278,6 +297,7 @@ sub INDEGO_SendCommand($$;$) {
               noshutdown  => 1,
               header      => $header,
               data        => $data,
+              method      => $method,
               hash        => $hash,
               service     => $service,
               timestamp   => $timestamp,
@@ -380,7 +400,8 @@ sub INDEGO_ReceiveCommand($$$) {
             readingsEndUpdate( $hash, 1 );
 
             INDEGO_SendCommand($hash, "map") if ($return->{map_update_available});
-            INDEGO_SendCommand($hash, "metadata") if (ReadingsVal($name, "firmware", "") eq "");
+            INDEGO_SendCommand($hash, "metadata") if (ReadingsVal($name, "alm_name", "") eq "");
+            INDEGO_SendCommand($hash, "calendar");
           }
         }
     
@@ -391,6 +412,37 @@ sub INDEGO_ReceiveCommand($$$) {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "service_counter",      $return->{service_counter});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "bareToolnumber",       $return->{bareToolnumber});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "alm_firmware_version", $return->{alm_firmware_version});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # calendar
+        elsif ( $service eq "calendar" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "sel_cal", $return->{sel_cal});
+            if ( ref($return->{cals}) eq "ARRAY" ) {
+              my @cals = @{$return->{cals}};
+              for (my $i = 0; $i < @cals; $i++) {
+                my $cal = $cals[$i]->{cal};
+                my @days = @{$cals[$i]->{days}};
+                for (my $j = 0; $j < @days; $j++) {
+                  my $day = $days[$j]->{day};
+                  my $schedule;
+                  my @slots = @{$days[$j]->{slots}};
+                  for (my $k = 0; $k < @slots; $k++) {
+                    if ($slots[$k]->{En}) {
+                      if (defined($schedule)) {
+                        $schedule .= " ".$slots[$k]->{StHr}.":".$slots[$k]->{StMin}."-".$slots[$k]->{EnHr}.":".$slots[$k]->{EnMin};
+                      } else {
+                        $schedule = $slots[$k]->{StHr}.":".$slots[$k]->{StMin}."-".$slots[$k]->{EnHr}.":".$slots[$k]->{EnMin};
+                      }
+                    }
+                  }
+                  INDEGO_ReadingsBulkUpdateIfChanged($hash, "cal".$cal."_".$day, $schedule) if (defined($schedule));
+                }
+              }
+            }
 
             readingsEndUpdate( $hash, 1 );
           }
