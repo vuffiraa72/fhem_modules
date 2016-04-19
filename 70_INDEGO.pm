@@ -244,30 +244,24 @@ sub INDEGO_SendCommand($$;$) {
       if (defined($type)) {
         $header .= "\r\nContent-Type: application/json";
         $data = "{\"state\":\"".$type."\"}";
-        $method = "POST";
+        $method = "PUT";
       }
 
-    } elsif ($service eq "calendar") {
+    } elsif ($service eq "firmware") {
+      $URL .= "alms/";
+      $URL .= ReadingsVal($name, "alm_sn", "");
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+
+    } else {
       $URL .= "alms/";
       $URL .= ReadingsVal($name, "alm_sn", "");
       $URL .= "/$service";
-      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
-
-    } elsif ($service eq "map") {
-      $URL .= "alms/";
-      $URL .= ReadingsVal($name, "alm_sn", "");
-      $URL .= "/$service";
-      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
-
-    } elsif ($service eq "metadata") {
-      $URL .= "alms/";
-      $URL .= ReadingsVal($name, "alm_sn", "");
       $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
 
     }
 
-    # send request via HTTP-POST method
-    Log3 $name, 5, "INDEGO $name: POST $URL (" . urlDecode($data) . ")"
+    # send request via HTTP method
+    Log3 $name, 5, "INDEGO $name: " . defined($method) ? $method : "POST" . " $URL (" . urlDecode($data) . ")"
       if ( defined($data) );
     Log3 $name, 5, "INDEGO $name: GET $URL"
       if ( !defined($data) );
@@ -300,6 +294,7 @@ sub INDEGO_SendCommand($$;$) {
               method      => $method,
               hash        => $hash,
               service     => $service,
+              cmd         => $type,
               timestamp   => $timestamp,
               callback    => \&INDEGO_ReceiveCommand,
           }
@@ -374,7 +369,7 @@ sub INDEGO_ReceiveCommand($$$) {
 
         # state
         if ( $service eq "state" ) {
-          if ( ref($return) eq "HASH" ) {
+          if ( ref($return) eq "HASH" and !defined($cmd)) {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "state",          INDEGO_BuildState($hash, $return->{state}));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",          $return->{mowed});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",       FmtDateTime(int($return->{mowed_ts}/1000)));
@@ -386,27 +381,27 @@ sub INDEGO_ReceiveCommand($$$) {
                 my $total = $runtime->{total};
                 my $operate = $total->{operate};
                 my $charge = $total->{charge};
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "totalOperate", int($operate/60).":".($operate-int($operate/60)*60));
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "totalCharge",  int($charge/60).":".($charge-int($charge/60)*60));
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "totalOperate", INDEGO_GetDuration($hash, $operate));
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "totalCharge",  INDEGO_GetDuration($hash, $charge));
               }
               if ( ref($runtime->{session}) eq "HASH" ) {
                 my $session = $runtime->{session};
                 my $operate = $session->{operate};
                 my $charge = $session->{charge};
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "sessionOperate", int($operate/60).":".($operate-int($operate/60)*60));
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "sessionCharge",  int($charge/60).":".($charge-int($charge/60)*60));
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "sessionOperate", INDEGO_GetDuration($hash, $operate));
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "sessionCharge",  INDEGO_GetDuration($hash, $charge));
               }
             }
             readingsEndUpdate( $hash, 1 );
 
             INDEGO_SendCommand($hash, "map") if ($return->{map_update_available});
-            INDEGO_SendCommand($hash, "metadata") if (ReadingsVal($name, "alm_name", "") eq "");
+            INDEGO_SendCommand($hash, "firmware") if (ReadingsVal($name, "alm_name", "") eq "");
             INDEGO_SendCommand($hash, "calendar");
           }
         }
     
-        # metadata
-        elsif ( $service eq "metadata" ) {
+        # firmware
+        elsif ( $service eq "firmware" ) {
           if ( ref($return) eq "HASH") {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "alm_name",             $return->{alm_name});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "service_counter",      $return->{service_counter});
@@ -420,28 +415,45 @@ sub INDEGO_ReceiveCommand($$$) {
         # calendar
         elsif ( $service eq "calendar" ) {
           if ( ref($return) eq "HASH") {
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "sel_cal", $return->{sel_cal});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "cal", $return->{sel_cal});
+
+            my %currentCals;
+            foreach ( keys %{ $hash->{READINGS} } ) {
+              $currentCals{$_} = 1 if ( $_ =~ /^cal\d_.*/ );
+            }
+
             if ( ref($return->{cals}) eq "ARRAY" ) {
               my @cals = @{$return->{cals}};
-              for (my $i = 0; $i < @cals; $i++) {
-                my $cal = $cals[$i]->{cal};
-                my @days = @{$cals[$i]->{days}};
-                for (my $j = 0; $j < @days; $j++) {
-                  my $day = $days[$j]->{day};
+              my $cal;
+              foreach $cal (@cals) {
+                my @days = @{$cal->{days}};
+                my $day;
+                for $day (@days) {
                   my $schedule;
-                  my @slots = @{$days[$j]->{slots}};
-                  for (my $k = 0; $k < @slots; $k++) {
-                    if ($slots[$k]->{En}) {
+                  my @slots = @{$day->{slots}};
+                  my $slot;
+                  for $slot (@slots) {
+                    if ($slot->{En}) {
+                      my $slotStr = INDEGO_GetSlotFormatted($hash, $slot->{StHr}, $slot->{StMin}, $slot->{EnHr}, $slot->{EnMin});
                       if (defined($schedule)) {
-                        $schedule .= " ".$slots[$k]->{StHr}.":".$slots[$k]->{StMin}."-".$slots[$k]->{EnHr}.":".$slots[$k]->{EnMin};
+                        $schedule .= " ".$slotStr;
                       } else {
-                        $schedule = $slots[$k]->{StHr}.":".$slots[$k]->{StMin}."-".$slots[$k]->{EnHr}.":".$slots[$k]->{EnMin};
+                        $schedule = $slotStr;
                       }
                     }
                   }
-                  INDEGO_ReadingsBulkUpdateIfChanged($hash, "cal".$cal."_".$day, $schedule) if (defined($schedule));
+                  if (defined($schedule)) {
+                    my $reading = "cal".$cal->{cal}."_".$day->{day}."_".INDEGO_GetDay($hash, $day->{day});
+                    INDEGO_ReadingsBulkUpdateIfChanged($hash, $reading, $schedule) ;
+                    delete $currentCals{$reading};
+                  }
                 }
               }
+            }
+
+            #remove outdated calendar information
+            foreach ( keys %currentCals ) {
+              delete( $hash->{READINGS}{$_} );
             }
 
             readingsEndUpdate( $hash, 1 );
@@ -520,6 +532,33 @@ sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
   my $name = $hash->{NAME};
 
   readingsBulkUpdate($hash, $reading, $value) if (ReadingsVal($name, $reading, "") ne $value);
+}
+
+sub INDEGO_GetSlotFormatted($$$$$) {
+  my ($hash,$startHour,$startMin,$endHour,$endMin) = @_;
+  
+  return sprintf("%02d:%02d-%02d:%02d", $startHour, $startMin, $endHour, $endMin);  
+}
+
+sub INDEGO_GetDuration($$) {
+  my ($hash,$duration) = @_;
+  
+  return sprintf("%d:%02d", int($duration/60), $duration-int($duration/60)*60);  
+}
+
+sub INDEGO_GetDay($$) {
+    my ($hash,$day) = @_;
+    my $days = {
+        '0' => "Mon",
+        '1' => "Tue",
+        '2' => "Wed",
+        '3' => "Thu",
+        '4' => "Fri",
+        '5' => "Sat",
+        '6' => "Sun",
+    };
+
+    return $days->{$day};
 }
 
 sub INDEGO_BuildState($$) {
