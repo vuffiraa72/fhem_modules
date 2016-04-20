@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.3
+# Version: 0.1.5
 #
 ##############################################################################
 
@@ -261,8 +261,10 @@ sub INDEGO_SendCommand($$;$) {
     }
 
     # send request via HTTP method
-    Log3 $name, 5, "INDEGO $name: " . defined($method) ? $method : "POST" . " $URL (" . urlDecode($data) . ")"
-      if ( defined($data) );
+    Log3 $name, 5, "INDEGO $name: $method $URL (" . urlDecode($data) . ")"
+      if ( defined($data) && defined($method) );
+    Log3 $name, 5, "INDEGO $name: POST $URL (" . urlDecode($data) . ")"
+      if ( defined($data) && !defined($method) );
     Log3 $name, 5, "INDEGO $name: GET $URL"
       if ( !defined($data) );
     Log3 $name, 5, "INDEGO $name: header $header"
@@ -395,8 +397,6 @@ sub INDEGO_ReceiveCommand($$$) {
             readingsEndUpdate( $hash, 1 );
 
             INDEGO_SendCommand($hash, "map") if ($return->{map_update_available});
-            INDEGO_SendCommand($hash, "firmware") if (ReadingsVal($name, "alm_name", "") eq "");
-            INDEGO_SendCommand($hash, "calendar");
           }
         }
     
@@ -407,6 +407,41 @@ sub INDEGO_ReceiveCommand($$$) {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "service_counter",      $return->{service_counter});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "bareToolnumber",       $return->{bareToolnumber});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "alm_firmware_version", $return->{alm_firmware_version});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # alerts
+        elsif ( $service eq "alerts" ) {
+          if ( ref($return) eq "HASH") {
+            Log3 $name, 3, "INDEGO $name: received alerts - $data";
+          }
+        }
+
+        # updates
+        elsif ( $service eq "updates" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "updates", $return->{available} ? "available" : "unavailable");
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # security
+        elsif ( $service eq "security" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "security", $return->{enabled} ? "enabled" : "disabled");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "autolock", $return->{autolock} ? "true" : "false");
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # automaticUpdate
+        elsif ( $service eq "automaticUpdate" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "allow_automatic_update", $return->{allow_automatic_update} ? "true" : "false");
 
             readingsEndUpdate( $hash, 1 );
           }
@@ -483,6 +518,7 @@ sub INDEGO_ReceiveCommand($$$) {
             
             # new context received - reload state
             INDEGO_SendCommand($hash, "state");
+            INDEGO_TriggerFullDataUpdate($hash);
           }
         }
     
@@ -493,8 +529,8 @@ sub INDEGO_ReceiveCommand($$$) {
 
     } else {
         if ($rc =~ /401 Authentication was not successful/) {
-            Log3 $name, 4, "INDEGO $name: renew authentication context"; 
-            INDEGO_CheckContext($hash, "renew");
+            Log3 $name, 4, "INDEGO $name: authentication context invalidated"; 
+            readingsSingleUpdate($hash, "contextId", "", 1);
         }
     }
 
@@ -525,6 +561,17 @@ sub INDEGO_CheckContext($;$) {
   }
   
   return $contextId;
+}
+
+sub INDEGO_TriggerFullDataUpdate($) {
+  my ( $hash ) = @_;
+  
+  INDEGO_SendCommand($hash, "firmware");
+  INDEGO_SendCommand($hash, "alerts");
+  INDEGO_SendCommand($hash, "automaticUpdate");
+  INDEGO_SendCommand($hash, "calendar");
+  INDEGO_SendCommand($hash, "updates");
+  INDEGO_SendCommand($hash, "security");
 }
 
 sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
