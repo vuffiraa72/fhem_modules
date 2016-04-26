@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.5
+# Version: 0.1.6
 #
 ##############################################################################
 
@@ -34,7 +34,7 @@ use strict;
 use warnings;
 use Time::HiRes qw(gettimeofday);
 use HttpUtils;
-use JSON qw(decode_json);
+use JSON qw(decode_json encode_json);
 
 sub INDEGO_Set($@);
 sub INDEGO_Get($@);
@@ -119,7 +119,21 @@ sub INDEGO_Set($@) {
 
     return "No Argument given" if ( !defined( $a[1] ) );
 
-    my $usage = "Unknown argument " . $a[1] . ", choose one of mow:noArg pause:noArg returnToDock:noArg reloadMap:noArg";
+    my @calendars;
+    foreach ( keys %{ $hash->{READINGS} } ) {
+      if ( $_ =~ /^cal(\d)_.*/ ) {
+        my $cal = $1;
+        my @matches = grep(/$cal/, @calendars);
+        push(@calendars, $cal) if ( ( scalar @matches ) eq "0" );
+      }
+    }
+    @calendars = sort(@calendars);
+    my $calendars = join(",", @calendars);
+
+    my $usage = "Unknown argument " . $a[1];
+    $usage .= ", choose one of renewContext:noArg mow:noArg pause:noArg returnToDock:noArg reloadMap:noArg";
+    $usage .= " deleteAlert:noArg" if (ReadingsVal($name, "alert_id", "-") ne "-");
+    $usage .= " calendar:0,$calendars" if ($calendars ne "");
 
     my $cmd = '';
     my $result;
@@ -151,6 +165,29 @@ sub INDEGO_Set($@) {
         Log3 $name, 2, "INDEGO set $name " . $a[1];
 
         INDEGO_SendCommand( $hash, "map" );
+    }
+
+    # renewContext
+    elsif ( $a[1] eq "renewContext" ) {
+        Log3 $name, 2, "INDEGO set $name " . $a[1];
+
+        INDEGO_SendCommand( $hash, "authenticate" );
+    }
+
+    # deleteAlert
+    elsif ( $a[1] eq "deleteAlert" ) {
+        Log3 $name, 2, "INDEGO set $name " . $a[1];
+
+        INDEGO_SendCommand( $hash, "deleteAlert" );
+    }
+
+    # selectCalendar
+    elsif ( $a[1] eq "calendar" ) {
+        Log3 $name, 2, "INDEGO set $name " . $a[1] . " " . $a[2];
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        INDEGO_SendCommand( $hash, "setCalendar", $a[2] );
     }
 
     # return usage hint
@@ -215,7 +252,7 @@ sub INDEGO_SendCommand($$;$) {
     my $timeout     = 30;
     my $header;
     my $data;
-    my $method;
+    my $method      = "GET";
 
     Log3 $name, 5, "INDEGO $name: called function INDEGO_SendCommand()";
 
@@ -235,6 +272,20 @@ sub INDEGO_SendCommand($$;$) {
       $header .= "\r\nAuthorization: Basic ";
       $header .= encode_base64("$email:$password","");
       $data = "{\"device\":\"\", \"os_type\":\"Android\", \"os_version\":\"4.0\", \"dvc_manuf\":\"unknown\", \"dvc_type\":\"unknown\"}";
+      $method = "POST";
+
+    } elsif ($service eq "alerts") {
+      $URL .= $service;
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+
+    } elsif ($service eq "deleteAlert") {
+      my $id = ReadingsVal($name, "alert_id", "-");
+      return undef if ($id eq "-");
+
+      $URL .= "alerts/$id";
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+      #$data = "{\"device\":\"\", \"os_type\":\"Android\", \"os_version\":\"4.0\", \"dvc_manuf\":\"unknown\", \"dvc_type\":\"unknown\"}";
+      $method = "DELETE";
 
     } elsif ($service eq "state") {
       $URL .= "alms/";
@@ -246,6 +297,15 @@ sub INDEGO_SendCommand($$;$) {
         $data = "{\"state\":\"".$type."\"}";
         $method = "PUT";
       }
+
+    } elsif ($service eq "setCalendar") {
+      $URL .= "alms/";
+      $URL .= ReadingsVal($name, "alm_sn", "");
+      $URL .= "/calendar";
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+      $header .= "\r\nContent-Type: application/json";
+      $data = INDEGO_BuildCalendar($hash, $type);
+      $method = "PUT";
 
     } elsif ($service eq "firmware") {
       $URL .= "alms/";
@@ -262,10 +322,8 @@ sub INDEGO_SendCommand($$;$) {
 
     # send request via HTTP method
     Log3 $name, 5, "INDEGO $name: $method $URL (" . urlDecode($data) . ")"
-      if ( defined($data) && defined($method) );
-    Log3 $name, 5, "INDEGO $name: POST $URL (" . urlDecode($data) . ")"
-      if ( defined($data) && !defined($method) );
-    Log3 $name, 5, "INDEGO $name: GET $URL"
+      if ( defined($data) );
+    Log3 $name, 5, "INDEGO $name: $method $URL"
       if ( !defined($data) );
     Log3 $name, 5, "INDEGO $name: header $header"
       if ( defined($header) );
@@ -396,6 +454,7 @@ sub INDEGO_ReceiveCommand($$$) {
             }
             readingsEndUpdate( $hash, 1 );
 
+            INDEGO_SendCommand($hash, "alerts");
             INDEGO_SendCommand($hash, "map") if ($return->{map_update_available});
           }
         }
@@ -414,9 +473,23 @@ sub INDEGO_ReceiveCommand($$$) {
 
         # alerts
         elsif ( $service eq "alerts" ) {
-          if ( ref($return) eq "HASH") {
-            Log3 $name, 3, "INDEGO $name: received alerts - $data";
+          if ( ref($return) eq "ARRAY" and scalar(@{$return}) > 0) {
+            my $date;
+            my $alert;
+            foreach $alert (@{$return}) {
+              my $current_date = time_str2num(substr($alert->{date}, 0, 19));
+              if (!defined($date) or $date < $current_date) {
+                $date = $current_date;
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       $alert->{alert_id});
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", $alert->{headline});
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     FmtDateTime($current_date + fhemTzOffset($current_date)));
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_message",  $alert->{message});
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_flag",     $alert->{flag});
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_status",   $alert->{read_status});
+              }
+            }
           }
+          readingsEndUpdate( $hash, 1 );
         }
 
         # updates
@@ -532,6 +605,26 @@ sub INDEGO_ReceiveCommand($$$) {
             Log3 $name, 4, "INDEGO $name: authentication context invalidated"; 
             readingsSingleUpdate($hash, "contextId", "", 1);
         }
+
+        # no alerts
+        elsif ( $service eq "alerts" ) {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_message",  "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_flag",     "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_status",   "-");
+        }
+
+        # deleteAlert
+        elsif ( $service eq "deleteAlert" ) {
+            INDEGO_SendCommand($hash, "alerts");
+        }
+
+        # setCalendar
+        elsif ( $service eq "setCalendar" ) {
+            INDEGO_SendCommand($hash, "calendar");
+        }
     }
 
     return;
@@ -567,7 +660,6 @@ sub INDEGO_TriggerFullDataUpdate($) {
   my ( $hash ) = @_;
   
   INDEGO_SendCommand($hash, "firmware");
-  INDEGO_SendCommand($hash, "alerts");
   INDEGO_SendCommand($hash, "automaticUpdate");
   INDEGO_SendCommand($hash, "calendar");
   INDEGO_SendCommand($hash, "updates");
@@ -577,7 +669,8 @@ sub INDEGO_TriggerFullDataUpdate($) {
 sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
   my ($hash,$reading,$value) = @_;
   my $name = $hash->{NAME};
-
+  
+  $value = "" if (!defined($value));
   readingsBulkUpdate($hash, $reading, $value) if (ReadingsVal($name, $reading, "") ne $value);
 }
 
@@ -646,6 +739,77 @@ sub INDEGO_BuildState($$) {
     }
 }
 
+sub INDEGO_BuildCalendar($$) {
+    my ($hash,$selected) = @_;
+    my $name = $hash->{NAME};
+
+    # create calendar object
+    my @cals;
+    for (my $i=1; $i<=5; $i++) {
+      my @days;
+      for (my $j=0; $j<=6; $j++) {
+        my @slots;
+        for (my $k=0; $k<2; $k++) {
+          my %slot = (
+            "En"    => \0,
+            "StHr"  => 0,
+            "StMin" => 0,
+            "EnHr"  => 0,
+            "EnMin" => 0
+          );
+          push(@slots, \%slot);
+        }
+        my %day = (
+          "day"   => $j,
+          "slots" => \@slots
+        );
+        push(@days, \%day);
+      }
+      my %cal = (
+        "cal"  => $i,
+        "days" => \@days
+      );
+      push(@cals, \%cal);
+    }
+
+    # set current data
+    foreach ( keys %{ $hash->{READINGS} } ) {
+      if ( $_ =~ /^cal(\d)_(\d)_.*/ ) {
+        my $calnr = $1;
+        $calnr--; # array starts with 0
+        my $daynr = $2;
+        my $value = ReadingsVal($name, $_, "");
+        Log3 $name, 3, "--> $value";
+        if ($value =~ /^(\d{2}):(\d{2})-(\d{2}):(\d{2}) (\d{2}):(\d{2})-(\d{2}):(\d{2})$/) {
+          my $slot1 = $cals[$calnr]->{days}[$daynr]->{slots}[0];
+          $slot1->{En}    = \1;
+          $slot1->{StHr}  = int($1);
+          $slot1->{StMin} = int($2);
+          $slot1->{EnHr}  = int($3);
+          $slot1->{EnMin} = int($4);
+          my $slot2 = $cals[$calnr]->{days}[$daynr]->{slots}[1];
+          $slot1->{En}    = \1;
+          $slot1->{StHr}  = int($5);
+          $slot1->{StMin} = int($6);
+          $slot1->{EnHr}  = int($7);
+          $slot1->{EnMin} = int($8);
+        } elsif ($value =~ /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/) {
+          my $slot1 = $cals[$calnr]->{days}[$daynr]->{slots}[0];
+          $slot1->{En}    = \1;
+          $slot1->{StHr}  = int($1);
+          $slot1->{StMin} = int($2);
+          $slot1->{EnHr}  = int($3);
+          $slot1->{EnMin} = int($4);
+        }
+      }
+    }
+    
+    my %calendar = (
+      "sel_cal" => int($selected),
+      "cals"    => \@cals
+    );
+    return encode_json(\%calendar);
+}
 
 sub INDEGO_ShowMap($;$$) {
     my ($name,$width,$height) = @_;
