@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.6
+# Version: 0.1.7
 #
 ##############################################################################
 
@@ -144,6 +144,7 @@ sub INDEGO_Set($@) {
         Log3 $name, 2, "INDEGO set $name " . $a[1];
 
         INDEGO_SendCommand( $hash, "state", "mow" );
+        readingsSingleUpdate($hash, "state", "Set_Mowing", 1);
     }
 
     # pause
@@ -151,6 +152,7 @@ sub INDEGO_Set($@) {
         Log3 $name, 2, "INDEGO set $name " . $a[1];
 
         INDEGO_SendCommand( $hash, "state", "pause" );
+        readingsSingleUpdate($hash, "state", "Set_Paused", 1);
     }
 
     # returnToDock
@@ -158,6 +160,7 @@ sub INDEGO_Set($@) {
         Log3 $name, 2, "INDEGO set $name " . $a[1];
 
         INDEGO_SendCommand( $hash, "state", "returnToDock" );
+        readingsSingleUpdate($hash, "state", "Set_Returning", 1);
     }
 
     # reloadMap
@@ -592,6 +595,15 @@ sub INDEGO_ReceiveCommand($$$) {
             # new context received - reload state
             INDEGO_SendCommand($hash, "state");
             INDEGO_TriggerFullDataUpdate($hash);
+            
+            # re-execute previous command
+            if (defined($cmd)) {
+              if ($cmd =~ /(\w+)\/(\w+)/) {
+                INDEGO_SendCommand($hash, $1, $2);
+              } else {
+                INDEGO_SendCommand($hash, $cmd);
+              }
+            }
           }
         }
     
@@ -603,28 +615,34 @@ sub INDEGO_ReceiveCommand($$$) {
     } else {
         if ($rc =~ /401 Authentication was not successful/) {
             Log3 $name, 4, "INDEGO $name: authentication context invalidated"; 
-            readingsSingleUpdate($hash, "contextId", "", 1);
-        }
+            if ( $service =~ /map|deleteAlert|setCalendar/ or ($service eq "state" and defined($cmd))) {
+                INDEGO_SendCommand($hash, "authenticate", "$service/$cmd");
+            } else {
+                readingsSingleUpdate($hash, "contextId", "", 1);
+            }
+        } else {
+            Log3 $name, 3, "INDEGO $name: $service / $rc";
 
-        # no alerts
-        elsif ( $service eq "alerts" ) {
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       "-");
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", "-");
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     "-");
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_message",  "-");
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_flag",     "-");
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_status",   "-");
-        }
-
-        # deleteAlert
-        elsif ( $service eq "deleteAlert" ) {
-            INDEGO_SendCommand($hash, "alerts");
-        }
-
-        # setCalendar
-        elsif ( $service eq "setCalendar" ) {
-            INDEGO_SendCommand($hash, "calendar");
-        }
+            # no alerts
+            if ( $service eq "alerts" ) {
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       "-");
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", "-");
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     "-");
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_message",  "-");
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_flag",     "-");
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_status",   "-");
+            }
+    
+            # deleteAlert
+            elsif ( $service eq "deleteAlert" ) {
+                INDEGO_SendCommand($hash, "alerts");
+            }
+    
+            # setCalendar
+            elsif ( $service eq "setCalendar" ) {
+                INDEGO_SendCommand($hash, "calendar");
+            }
+          }
     }
 
     return;
@@ -643,12 +661,13 @@ sub INDEGO_Undefine($$) {
     return;
 }
 
-sub INDEGO_CheckContext($;$) {
-  my ( $hash, $renew ) = @_;
+sub INDEGO_CheckContext($) {
+  my ($hash) = @_;
   my $name = $hash->{NAME};
   my $contextId = ReadingsVal($name, "contextId", "");
+  my $contextAge = ReadingsAge($name, "contextId", 0);
 
-  if ($contextId eq "" or defined($renew)) {
+  if ($contextId eq "" or $contextAge > 7200) {
     INDEGO_SendCommand($hash, "authenticate");
     return;
   }
@@ -664,6 +683,7 @@ sub INDEGO_TriggerFullDataUpdate($) {
   INDEGO_SendCommand($hash, "calendar");
   INDEGO_SendCommand($hash, "updates");
   INDEGO_SendCommand($hash, "security");
+  INDEGO_SendCommand($hash, "map");
 }
 
 sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
