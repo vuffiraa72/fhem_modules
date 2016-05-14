@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.7
+# Version: 0.1.8
 #
 ##############################################################################
 
@@ -620,29 +620,27 @@ sub INDEGO_ReceiveCommand($$$) {
             } else {
                 readingsSingleUpdate($hash, "contextId", "", 1);
             }
-        } else {
-            Log3 $name, 3, "INDEGO $name: $service / $rc";
+        }
 
-            # no alerts
-            if ( $service eq "alerts" ) {
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       "-");
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", "-");
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     "-");
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_message",  "-");
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_flag",     "-");
-                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_status",   "-");
-            }
-    
-            # deleteAlert
-            elsif ( $service eq "deleteAlert" ) {
-                INDEGO_SendCommand($hash, "alerts");
-            }
-    
-            # setCalendar
-            elsif ( $service eq "setCalendar" ) {
-                INDEGO_SendCommand($hash, "calendar");
-            }
-          }
+        # no alerts
+        elsif ( $service eq "alerts" and $rc =~ /204 User found but no alerts were found/) {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_message",  "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_flag",     "-");
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_status",   "-");
+        }
+
+        # deleteAlert
+        elsif ( $service eq "deleteAlert" ) {
+            INDEGO_SendCommand($hash, "alerts");
+        }
+
+        # setCalendar
+        elsif ( $service eq "setCalendar" ) {
+            INDEGO_SendCommand($hash, "calendar");
+        }
     }
 
     return;
