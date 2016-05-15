@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.8
+# Version: 0.1.9
 #
 ##############################################################################
 
@@ -236,6 +236,23 @@ sub INDEGO_Define($$) {
     RemoveInternalTimer($hash);
     InternalTimer( gettimeofday() + 2, "INDEGO_GetStatus", $hash, 1 );
 
+    INDEGO_addExtension($name, "INDEGO_GetMap", "INDEGO/$name/map");
+
+    return;
+}
+
+###################################
+sub INDEGO_Undefine($$) {
+    my ( $hash, $arg ) = @_;
+    my $name = $hash->{NAME};
+
+    Log3 $name, 5, "INDEGO $name: called function INDEGO_Undefine()";
+
+    # Stop the internal GetStatus-Loop and exit
+    RemoveInternalTimer($hash);
+
+    INDEGO_removeExtension("INDEGO/$name/map");
+
     return;
 }
 
@@ -244,6 +261,27 @@ sub INDEGO_Define($$) {
 #   Begin of helper functions
 #
 ############################################################################################################
+
+#########################
+sub INDEGO_addExtension($$$) {
+    my ( $name, $func, $link ) = @_;
+
+    my $url = "/$link";
+    Log3 $name, 2, "Registering INDEGO $name for URL $url...";
+    $data{FWEXT}{$url}{deviceName} = $name;
+    $data{FWEXT}{$url}{FUNC}       = $func;
+    $data{FWEXT}{$url}{LINK}       = $link;
+}
+
+#########################
+sub INDEGO_removeExtension($) {
+    my ($link) = @_;
+
+    my $url  = "/$link";
+    my $name = $data{FWEXT}{$url}{deviceName};
+    Log3 $name, 2, "Unregistering INDEGO $name for URL $url...";
+    delete $data{FWEXT}{$url};
+}
 
 ###################################
 sub INDEGO_SendCommand($$;$) {
@@ -483,6 +521,7 @@ sub INDEGO_ReceiveCommand($$$) {
               my $current_date = time_str2num(substr($alert->{date}, 0, 19));
               if (!defined($date) or $date < $current_date) {
                 $date = $current_date;
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_number",   scalar(@{$return}));
                 INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       $alert->{alert_id});
                 INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", $alert->{headline});
                 INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     FmtDateTime($current_date + fhemTzOffset($current_date)));
@@ -624,6 +663,7 @@ sub INDEGO_ReceiveCommand($$$) {
 
         # no alerts
         elsif ( $service eq "alerts" and $rc =~ /204 User found but no alerts were found/) {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_number", 0);
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_id",       "-");
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_headline", "-");
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "alert_date",     "-");
@@ -642,19 +682,6 @@ sub INDEGO_ReceiveCommand($$$) {
             INDEGO_SendCommand($hash, "calendar");
         }
     }
-
-    return;
-}
-
-###################################
-sub INDEGO_Undefine($$) {
-    my ( $hash, $arg ) = @_;
-    my $name = $hash->{NAME};
-
-    Log3 $name, 5, "INDEGO $name: called function INDEGO_Undefine()";
-
-    # Stop the internal GetStatus-Loop and exit
-    RemoveInternalTimer($hash);
 
     return;
 }
@@ -843,7 +870,6 @@ sub INDEGO_ShowMap($;$$) {
     my $data = $map;
 
     $width  = 800 if (!defined($width));
-    $height = 600 if (!defined($height));
 
     if ($map eq "") {
       $map = INDEGO_SendCommand($hash, "map", "blocking");
@@ -854,7 +880,7 @@ sub INDEGO_ShowMap($;$$) {
       $data = Compress::Zlib::uncompress($data) if ($compress);
     }
 
-    if ($data =~ /viewBox="0 0 (\d+) (\d+)"/) {
+    if (!defined($height) and $data =~ /viewBox="0 0 (\d+) (\d+)"/) {
       my $factor = $1/$width;
       $height = int($2/$factor);
     }
@@ -863,6 +889,21 @@ sub INDEGO_ShowMap($;$$) {
  
 
     return $html;
+}
+
+sub INDEGO_GetMap() {
+    my ($request) = @_;
+    
+    if ($request =~ /^\/INDEGO\/(\w+)\/map(\/(\d+)(\/(\d+))?)?/) {
+      my $name   = $1;
+      my $width  = $3;
+      my $height = $5;
+      
+      return ("text/html; charset=utf-8", INDEGO_ShowMap($name, $width, $height));
+    }
+
+    return ("text/plain; charset=utf-8", "No INDEGO device for webhook $request");
+    
 }
 
 1;
