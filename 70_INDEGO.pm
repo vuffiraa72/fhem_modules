@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.9
+# Version: 0.1.10
 #
 ##############################################################################
 
@@ -472,6 +472,7 @@ sub INDEGO_ReceiveCommand($$$) {
         if ( $service eq "state" ) {
           if ( ref($return) eq "HASH" and !defined($cmd)) {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "state",          INDEGO_BuildState($hash, $return->{state}));
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "state_id",       $return->{state});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",          $return->{mowed});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",       FmtDateTime(int($return->{mowed_ts}/1000)));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts", FmtDateTime(int($return->{mapsvgcache_ts}/1000)));
@@ -880,15 +881,19 @@ sub INDEGO_ShowMap($;$$) {
       $data = Compress::Zlib::uncompress($data) if ($compress);
     }
 
-    if (!defined($height) and $data =~ /viewBox="0 0 (\d+) (\d+)"/) {
-      my $factor = $1/$width;
-      $height = int($2/$factor);
+    if (defined($data)) {
+      if (!defined($height) and $data =~ /viewBox="0 0 (\d+) (\d+)"/) {
+        my $factor = $1/$width;
+        $height = int($2/$factor);
+      }
+      my $html = '<svg style="width:'.$width.'px; height:'.$height.'px;"';
+      $html .= substr($data, 4);
+   
+  
+      return $html;
     }
-    my $html = '<svg style="width:'.$width.'px; height:'.$height.'px;"';
-    $html .= substr($data, 4);
- 
-
-    return $html;
+    
+    return 'Map currently not available';
 }
 
 sub INDEGO_GetMap() {
