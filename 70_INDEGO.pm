@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.10
+# Version: 0.2.0
 #
 ##############################################################################
 
@@ -248,6 +248,9 @@ sub INDEGO_Undefine($$) {
 
     Log3 $name, 5, "INDEGO $name: called function INDEGO_Undefine()";
 
+    # De-Authenticate
+    INDEGO_sendCommand($hash, "deauthenticate");
+
     # Stop the internal GetStatus-Loop and exit
     RemoveInternalTimer($hash);
 
@@ -315,6 +318,11 @@ sub INDEGO_SendCommand($$;$) {
       $data = "{\"device\":\"\", \"os_type\":\"Android\", \"os_version\":\"4.0\", \"dvc_manuf\":\"unknown\", \"dvc_type\":\"unknown\"}";
       $method = "POST";
 
+    } elsif ($service eq "deauthenticate") {
+      $URL .= $service;
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+      $method = "DELETE";
+
     } elsif ($service eq "alerts") {
       $URL .= $service;
       $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
@@ -338,6 +346,17 @@ sub INDEGO_SendCommand($$;$) {
         $data = "{\"state\":\"".$type."\"}";
         $method = "PUT";
       }
+
+    } elsif ($service eq "longpollState") {
+      $URL .= "alms/";
+      $URL .= ReadingsVal($name, "alm_sn", "");
+      $URL .= "/$service";
+      $URL .= "?longpoll=true&timeout=3600&last=$type";
+      
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+      $timeout = 3600;
+      
+      $hash->{LONGPOLL} = time();
 
     } elsif ($service eq "setCalendar") {
       $URL .= "alms/";
@@ -469,13 +488,13 @@ sub INDEGO_ReceiveCommand($$$) {
         }
 
         # state
-        if ( $service eq "state" ) {
+        if ( $service eq "state" or $service eq "longpollState") {
           if ( ref($return) eq "HASH" and !defined($cmd)) {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "state",          INDEGO_BuildState($hash, $return->{state}));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "state_id",       $return->{state});
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",          $return->{mowed});
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",       FmtDateTime(int($return->{mowed_ts}/1000)));
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts", FmtDateTime(int($return->{mapsvgcache_ts}/1000)));
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",          $return->{mowed}) if (defined($return->{mowed}));
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",       FmtDateTime(int($return->{mowed_ts}/1000))) if (defined($return->{mowed_ts}));
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts", FmtDateTime(int($return->{mapsvgcache_ts}/1000))) if (defined($return->{mapsvgcache_ts}));
             #INDEGO_ReadingsBulkUpdateIfChanged($hash, "map_update_available", $return->{map_update_available});
             if ( ref($return->{runtime}) eq "HASH" ) {
               my $runtime = $return->{runtime};
@@ -496,7 +515,16 @@ sub INDEGO_ReceiveCommand($$$) {
             }
             readingsEndUpdate( $hash, 1 );
 
+            INDEGO_CheckLongpoll($hash, $return->{state}) if ($service eq "state");
+
+            INDEGO_SendCommand($hash, "longpollState", $return->{state}) if ($service eq "longpollState");
             INDEGO_SendCommand($hash, "alerts");
+            INDEGO_SendCommand($hash, "location");
+            INDEGO_SendCommand($hash, "predictive");
+            INDEGO_SendCommand($hash, "predictive/nextcutting");
+            INDEGO_SendCommand($hash, "predictive/useradjustment");
+            INDEGO_SendCommand($hash, "predictive/useradjustment?withProposal=true");
+            INDEGO_SendCommand($hash, "predictive/weather");
             INDEGO_SendCommand($hash, "map") if ($return->{map_update_available});
           }
         }
@@ -563,6 +591,63 @@ sub INDEGO_ReceiveCommand($$$) {
           }
         }
 
+        # location
+        elsif ( $service eq "location" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "latitude",  $return->{latitude});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "longitude", $return->{longitude});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # predictive/nextcutting
+        elsif ( $service eq "predictive" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_enabled",  $return->{enabled});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # predictive/location
+        elsif ( $service eq "predictive/location" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_loc_latitude",  $return->{latitude});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_loc_longitude", $return->{longitude});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_loc_timezone",  $return->{timezone});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # predictive/nextcutting
+        elsif ( $service eq "predictive/nextcutting" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mow_next",  $return->{mow_next});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # predictive/useradjustment
+        elsif ( $service eq "predictive/useradjustment" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "user_adjustment",  $return->{user_adjustment});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # predictive/useradjustment?withProposal=true
+        elsif ( $service eq "predictive/useradjustment?withProposal=true" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "user_adjustment_proposed",  $return->{user_adjustment});
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
         # calendar
         elsif ( $service eq "calendar" ) {
           if ( ref($return) eq "HASH") {
@@ -605,6 +690,71 @@ sub INDEGO_ReceiveCommand($$$) {
             #remove outdated calendar information
             foreach ( keys %currentCals ) {
               delete( $hash->{READINGS}{$_} );
+            }
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # predictive/calendar
+        elsif ( $service eq "predictive/calendar" ) {
+          if ( ref($return) eq "HASH") {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_cal", $return->{sel_cal});
+
+            my %currentCals;
+            foreach ( keys %{ $hash->{READINGS} } ) {
+              $currentCals{$_} = 1 if ( $_ =~ /^fc_cal\d_.*/ );
+            }
+
+            if ( ref($return->{cals}) eq "ARRAY" ) {
+              my @cals = @{$return->{cals}};
+              my $cal;
+              foreach $cal (@cals) {
+                my @days = @{$cal->{days}};
+                my $day;
+                for $day (@days) {
+                  my $schedule;
+                  my @slots = @{$day->{slots}};
+                  my $slot;
+                  for $slot (@slots) {
+                    if ($slot->{En}) {
+                      my $slotStr = INDEGO_GetSlotFormatted($hash, $slot->{StHr}, $slot->{StMin}, $slot->{EnHr}, $slot->{EnMin});
+                      if (defined($schedule)) {
+                        $schedule .= " ".$slotStr;
+                      } else {
+                        $schedule = $slotStr;
+                      }
+                    }
+                  }
+                  if (defined($schedule)) {
+                    my $reading = "fc_cal".$cal->{cal}."_".$day->{day}."_".INDEGO_GetDay($hash, $day->{day});
+                    INDEGO_ReadingsBulkUpdateIfChanged($hash, $reading, $schedule) ;
+                    delete $currentCals{$reading};
+                  }
+                }
+              }
+            }
+
+            #remove outdated calendar information
+            foreach ( keys %currentCals ) {
+              delete( $hash->{READINGS}{$_} );
+            }
+
+            readingsEndUpdate( $hash, 1 );
+          }
+        }
+
+        # predictive/weather
+        elsif ( $service eq "predictive/weather" ) {
+          if ( ref($return) eq "HASH") {
+            if ( ref($return->{LocationWeather}) eq "HASH" ) {
+              my $weather = $return->{LocationWeather};
+              if ( ref($weather->{location}) eq "HASH" ) {
+                my $location = $weather->{location};
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_loc_name",    $location->{name});
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_loc_country", $location->{country});
+                INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_loc_dtz",     $location->{dtz});
+              }
             }
 
             readingsEndUpdate( $hash, 1 );
@@ -660,6 +810,7 @@ sub INDEGO_ReceiveCommand($$$) {
             } else {
                 readingsSingleUpdate($hash, "contextId", "", 1);
             }
+            $hash->{LONGPOLL} = 0 if ($service eq "longpollState");
         }
 
         # no alerts
@@ -701,6 +852,16 @@ sub INDEGO_CheckContext($) {
   return $contextId;
 }
 
+sub INDEGO_CheckLongpoll($$) {
+  my ($hash,$state) = @_;
+  my $name = $hash->{NAME};
+  
+  if (!defined($hash->{LONGPOLL}) or time() - $hash->{LONGPOLL} > 3600) {
+    Log3 $name, 4, "INDEGO $name: Request GET state (longPoll)";
+    INDEGO_SendCommand($hash, "longpollState", $state);
+  }
+}
+
 sub INDEGO_TriggerFullDataUpdate($) {
   my ( $hash ) = @_;
   
@@ -710,6 +871,8 @@ sub INDEGO_TriggerFullDataUpdate($) {
   INDEGO_SendCommand($hash, "updates");
   INDEGO_SendCommand($hash, "security");
   INDEGO_SendCommand($hash, "map");
+  INDEGO_SendCommand($hash, "predictive/calendar");
+  INDEGO_SendCommand($hash, "predictive/location");
 }
 
 sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
