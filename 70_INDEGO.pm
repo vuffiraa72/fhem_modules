@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.0
+# Version: 0.2.1
 #
 ##############################################################################
 
@@ -350,8 +350,7 @@ sub INDEGO_SendCommand($$;$) {
     } elsif ($service eq "longpollState") {
       $URL .= "alms/";
       $URL .= ReadingsVal($name, "alm_sn", "");
-      $URL .= "/$service";
-      $URL .= "?longpoll=true&timeout=3600&last=$type";
+      $URL .= "/state?longpoll=true&timeout=3600&last=$type";
       
       $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
       $timeout = 3600;
@@ -524,7 +523,6 @@ sub INDEGO_ReceiveCommand($$$) {
             INDEGO_SendCommand($hash, "predictive/nextcutting");
             INDEGO_SendCommand($hash, "predictive/useradjustment");
             INDEGO_SendCommand($hash, "predictive/useradjustment?withProposal=true");
-            INDEGO_SendCommand($hash, "predictive/weather");
             INDEGO_SendCommand($hash, "map") if ($return->{map_update_available});
           }
         }
@@ -873,6 +871,7 @@ sub INDEGO_TriggerFullDataUpdate($) {
   INDEGO_SendCommand($hash, "map");
   INDEGO_SendCommand($hash, "predictive/calendar");
   INDEGO_SendCommand($hash, "predictive/location");
+  INDEGO_SendCommand($hash, "predictive/weather");
 }
 
 sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
