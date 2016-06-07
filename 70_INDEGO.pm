@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.1
+# Version: 0.2.2
 #
 ##############################################################################
 
@@ -349,8 +349,9 @@ sub INDEGO_SendCommand($$;$) {
 
     } elsif ($service eq "longpollState") {
       $URL .= "alms/";
-      $URL .= ReadingsVal($name, "alm_sn", "");
-      $URL .= "/state?longpoll=true&timeout=3600&last=$type";
+      $URL .= ReadingsVal($name, "alm_sn", "0");
+      $URL .= "/state?longpoll=true&timeout=3600&last=";
+      $URL .= ReadingsVal($name, "state_id", "0");
       
       $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
       $timeout = 3600;
@@ -476,7 +477,7 @@ sub INDEGO_ReceiveCommand($$$) {
                 }
                 $return = $data;
             } else {
-                Log3 $name, 5, "INDEGO $name: RES ERROR $service\n" . $data;
+                Log3 $name, 3, "INDEGO $name: RES ERROR $service\n" . $data;
                 if ( !defined($cmd) || $cmd eq "" ) {
                     Log3 $name, 5, "INDEGO $name: RES ERROR $service\n$data";
                 } else {
@@ -514,9 +515,9 @@ sub INDEGO_ReceiveCommand($$$) {
             }
             readingsEndUpdate( $hash, 1 );
 
-            INDEGO_CheckLongpoll($hash, $return->{state}) if ($service eq "state");
+            INDEGO_CheckLongpoll($hash) if ($service eq "state");
 
-            INDEGO_SendCommand($hash, "longpollState", $return->{state}) if ($service eq "longpollState");
+            INDEGO_SendCommand($hash, "longpollState") if ($service eq "longpollState");
             INDEGO_SendCommand($hash, "alerts");
             INDEGO_SendCommand($hash, "location");
             INDEGO_SendCommand($hash, "predictive");
@@ -801,7 +802,7 @@ sub INDEGO_ReceiveCommand($$$) {
         }
 
     } else {
-        if ($rc =~ /401 Authentication was not successful/) {
+        if ($rc =~ /401/) {
             Log3 $name, 4, "INDEGO $name: authentication context invalidated"; 
             if ( $service =~ /map|deleteAlert|setCalendar/ or ($service eq "state" and defined($cmd))) {
                 INDEGO_SendCommand($hash, "authenticate", "$service/$cmd");
@@ -850,13 +851,13 @@ sub INDEGO_CheckContext($) {
   return $contextId;
 }
 
-sub INDEGO_CheckLongpoll($$) {
-  my ($hash,$state) = @_;
+sub INDEGO_CheckLongpoll($) {
+  my ($hash) = @_;
   my $name = $hash->{NAME};
   
   if (!defined($hash->{LONGPOLL}) or time() - $hash->{LONGPOLL} > 3600) {
     Log3 $name, 4, "INDEGO $name: Request GET state (longPoll)";
-    INDEGO_SendCommand($hash, "longpollState", $state);
+    INDEGO_SendCommand($hash, "longpollState");
   }
 }
 
