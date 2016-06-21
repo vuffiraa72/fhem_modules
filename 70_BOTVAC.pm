@@ -239,7 +239,7 @@ sub BOTVAC_Define($$) {
     $hash->{INTERVAL} = $interval;
 
     unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
-        $attr{$name}{webCmd} = 'start:stop:goToBase';
+        $attr{$name}{webCmd} = 'startCleaning Eco:stop:sendToBase';
     }
 
     # start the status update timer
