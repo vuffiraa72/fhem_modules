@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.2
+# Version: 0.2.3
 #
 ##############################################################################
 
@@ -135,10 +135,6 @@ sub INDEGO_Set($@) {
     $usage .= " deleteAlert:noArg" if (ReadingsVal($name, "alert_id", "-") ne "-");
     $usage .= " calendar:0,$calendars" if ($calendars ne "");
 
-    my $cmd = '';
-    my $result;
-
-
     # mow
     if ( $a[1] eq "mow" ) {
         Log3 $name, 2, "INDEGO set $name " . $a[1];
@@ -249,7 +245,7 @@ sub INDEGO_Undefine($$) {
     Log3 $name, 5, "INDEGO $name: called function INDEGO_Undefine()";
 
     # De-Authenticate
-    INDEGO_sendCommand($hash, "deauthenticate");
+    INDEGO_SendCommand($hash, "deauthenticate");
 
     # Stop the internal GetStatus-Loop and exit
     RemoveInternalTimer($hash);
@@ -301,8 +297,6 @@ sub INDEGO_SendCommand($$;$) {
     Log3 $name, 5, "INDEGO $name: called function INDEGO_SendCommand()";
 
     my $URL = "https://api.indego.iot.bosch-si.com/api/v1/";
-    my $response;
-    my $return;
     
     if ($service ne "authenticate") {
       return if !INDEGO_CheckContext($hash);
@@ -669,7 +663,7 @@ sub INDEGO_ReceiveCommand($$$) {
                   my $slot;
                   for $slot (@slots) {
                     if ($slot->{En}) {
-                      my $slotStr = INDEGO_GetSlotFormatted($hash, $slot->{StHr}, $slot->{StMin}, $slot->{EnHr}, $slot->{EnMin});
+                      my $slotStr = INDEGO_GetSlotFormatted($hash, $slot);
                       if (defined($schedule)) {
                         $schedule .= " ".$slotStr;
                       } else {
@@ -717,7 +711,7 @@ sub INDEGO_ReceiveCommand($$$) {
                   my $slot;
                   for $slot (@slots) {
                     if ($slot->{En}) {
-                      my $slotStr = INDEGO_GetSlotFormatted($hash, $slot->{StHr}, $slot->{StMin}, $slot->{EnHr}, $slot->{EnMin});
+                      my $slotStr = INDEGO_GetSlotFormatted($hash, $slot);
                       if (defined($schedule)) {
                         $schedule .= " ".$slotStr;
                       } else {
@@ -804,7 +798,9 @@ sub INDEGO_ReceiveCommand($$$) {
     } else {
         if ($rc =~ /401/) {
             Log3 $name, 4, "INDEGO $name: authentication context invalidated"; 
-            if ( $service =~ /map|deleteAlert|setCalendar/ or ($service eq "state" and defined($cmd))) {
+            if ( $service =~ /deleteAlert|setCalendar/) {
+                INDEGO_SendCommand($hash, "authenticate", "$service");
+            } elsif ($service eq "state" and defined($cmd)) {
                 INDEGO_SendCommand($hash, "authenticate", "$service/$cmd");
             } else {
                 readingsSingleUpdate($hash, "contextId", "", 1);
@@ -854,7 +850,9 @@ sub INDEGO_CheckContext($) {
 sub INDEGO_CheckLongpoll($) {
   my ($hash) = @_;
   my $name = $hash->{NAME};
-  
+
+  return if ( AttrVal($name, "disable", 0) == 1 );
+
   if (!defined($hash->{LONGPOLL}) or time() - $hash->{LONGPOLL} > 3600) {
     Log3 $name, 4, "INDEGO $name: Request GET state (longPoll)";
     INDEGO_SendCommand($hash, "longpollState");
@@ -869,10 +867,10 @@ sub INDEGO_TriggerFullDataUpdate($) {
   INDEGO_SendCommand($hash, "calendar");
   INDEGO_SendCommand($hash, "updates");
   INDEGO_SendCommand($hash, "security");
-  INDEGO_SendCommand($hash, "map");
   INDEGO_SendCommand($hash, "predictive/calendar");
   INDEGO_SendCommand($hash, "predictive/location");
   INDEGO_SendCommand($hash, "predictive/weather");
+  INDEGO_SendCommand($hash, "map");
 }
 
 sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
@@ -883,10 +881,10 @@ sub INDEGO_ReadingsBulkUpdateIfChanged($$$) {
   readingsBulkUpdate($hash, $reading, $value) if (ReadingsVal($name, $reading, "") ne $value);
 }
 
-sub INDEGO_GetSlotFormatted($$$$$) {
-  my ($hash,$startHour,$startMin,$endHour,$endMin) = @_;
+sub INDEGO_GetSlotFormatted($$) {
+  my ($hash,$slot) = @_;
   
-  return sprintf("%02d:%02d-%02d:%02d", $startHour, $startMin, $endHour, $endMin);  
+  return sprintf("%02d:%02d-%02d:%02d", $slot->{StHr}, $slot->{StMin}, $slot->{EnHr}, $slot->{EnMin});  
 }
 
 sub INDEGO_GetDuration($$) {
@@ -997,11 +995,11 @@ sub INDEGO_BuildCalendar($$) {
           $slot1->{EnHr}  = int($3);
           $slot1->{EnMin} = int($4);
           my $slot2 = $cals[$calnr]->{days}[$daynr]->{slots}[1];
-          $slot1->{En}    = \1;
-          $slot1->{StHr}  = int($5);
-          $slot1->{StMin} = int($6);
-          $slot1->{EnHr}  = int($7);
-          $slot1->{EnMin} = int($8);
+          $slot2->{En}    = \1;
+          $slot2->{StHr}  = int($5);
+          $slot2->{StMin} = int($6);
+          $slot2->{EnHr}  = int($7);
+          $slot2->{EnMin} = int($8);
         } elsif ($value =~ /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/) {
           my $slot1 = $cals[$calnr]->{days}[$daynr]->{slots}[0];
           $slot1->{En}    = \1;
@@ -1049,7 +1047,7 @@ sub INDEGO_ShowMap($;$$) {
         my $factor = $1/$width;
         $height = int($2/$factor);
       }
-      my $html = '<svg style="width:'.$width.'px; height:'.$height.'px;"';
+      my $html = '<svg style="width:'.$width.'px; height:'.$height.'px;"' if (defined($height));
       $html .= substr($data, 4);
    
   
