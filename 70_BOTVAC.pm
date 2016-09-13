@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.1.2
+# Version: 0.2.0
 #
 ##############################################################################
 
@@ -221,7 +221,7 @@ sub BOTVAC_Define($$) {
 
     if ( int(@a) < 4 ) {
         my $msg =
-          "Wrong syntax: define <name> BOTVAC <email> <password> [<poll-interval>]";
+          "Wrong syntax: define <name> BOTVAC <email> <password> [<vendor>] [<poll-interval>]";
         Log3 $name, 4, $msg;
         return $msg;
     }
@@ -234,8 +234,16 @@ sub BOTVAC_Define($$) {
     my $password = $a[3];
     $hash->{helper}{PASSWORD} = $password;
     
+    my $param = $a[4] if (defined($a[4]));
+    if (defined($param) and ($param eq "neato" or $param eq "vorwerk")) {
+      $hash->{helper}{VENDOR} = $param;
+      $param = $a[5];
+    } else {
+      $hash->{helper}{VENDOR} = "neato";
+    }
+    
     # use interval of 85 sec if not defined
-    my $interval = $a[4] || 85;
+    my $interval = $param || 85;
     $hash->{INTERVAL} = $interval;
 
     unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
@@ -268,7 +276,7 @@ sub BOTVAC_SendCommand($$;$$) {
 
     Log3 $name, 5, "BOTVAC $name: called function BOTVAC_SendCommand()";
 
-    my $URL;
+    my $URL = "https://";
     my $response;
     my $return;
     
@@ -289,18 +297,26 @@ sub BOTVAC_SendCommand($$;$$) {
 
     if ($service eq "sessions") {
       my $token = createUniqueId() . createUniqueId();
-      $URL = "https://beehive.neatocloud.com/sessions";
+      $URL .= BOTVAC_GetBeehiveHost($hash->{helper}{VENDOR});
+      $URL .= "/sessions";
       $data = "{\"platform\": \"ios\", \"email\": \"$email\", \"token\": \"$token\", \"password\": \"$password\"}";
+      %sslArgs = ( SSL_verify_mode => SSL_VERIFY_NONE );
 
     } elsif ($service eq "dashboard") {
       $header .= "\r\nAuthorization: Token token=".ReadingsVal($name, "accessToken", "");
-      $URL = "https://beehive.neatocloud.com/dashboard";
+      $URL .= BOTVAC_GetBeehiveHost($hash->{helper}{VENDOR});
+      $URL .= "/dashboard";
+      %sslArgs = ( SSL_verify_mode => SSL_VERIFY_NONE );
 
     } elsif ($service eq "messages") {
       my $serial = ReadingsVal($name, "serial", "");
       return if ($serial eq "");
 
-      $URL = "https://nucleo.neatocloud.com/vendors/neato/robots/$serial/messages";
+      $URL .= BOTVAC_GetNucleoHost($hash->{helper}{VENDOR});
+      $URL .= "/vendors/";
+      $URL .= $hash->{helper}{VENDOR};
+      $URL .= "/robots/$serial/messages";
+      
       $data = "{\"reqId\":\"1\",\"cmd\":\"$cmd\"";
       if (defined($params)) {
         $data .= ",\"params\":{";
@@ -318,7 +334,7 @@ sub BOTVAC_SendCommand($$;$$) {
       $header .= "\r\nDate: $date";
       $header .= "\r\nAuthorization: NEATOAPP $hmac";
 
-      %sslArgs = ( SSL_ca =>  [ BOTVAC_GetCAKey( ) ] );
+      %sslArgs = ( SSL_ca =>  [ BOTVAC_GetCAKey( $hash ) ] );
     }
 
     # send request via HTTP-POST method
@@ -585,8 +601,38 @@ sub BOTVAC_GetErrorText($) {
     }
 }
 
-sub BOTVAC_GetCAKey() {
-    my $ca_key = q{-----BEGIN CERTIFICATE-----
+sub BOTVAC_GetBeehiveHost($) {
+    my ($vendor) = @_;
+    my $vendors = {
+        'neato'   => 'beehive.neatocloud.com',
+        'vorwerk' => 'vorwerk-beehive-production.herokuapp.com',
+    };
+
+    if (defined( $vendors->{$vendor})) {
+        return $vendors->{$vendor};
+    } else {
+        return $vendors->{neato};
+    }
+}
+
+sub BOTVAC_GetNucleoHost($) {
+    my ($vendor) = @_;
+    my $vendors = {
+        'neato'   => 'nucleo.neatocloud.com',
+        'vorwerk' => 'nucleo.ksecosys.com',
+    };
+
+    if (defined( $vendors->{$vendor})) {
+        return $vendors->{$vendor};
+    } else {
+        return $vendors->{neato};
+    }
+}
+
+sub BOTVAC_GetCAKey($) {
+  my ( $hash ) = @_;
+  
+  my $ca_key = q{-----BEGIN CERTIFICATE-----
 MIIE3DCCA8SgAwIBAgIJALHphD11lrmHMA0GCSqGSIb3DQEBBQUAMIGkMQswCQYD
 VQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNVBAcTBk5ld2FyazEbMBkGA1UEChMS
 TmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQLEw5DbG91ZCBTZXJ2aWNlczEZMBcG
@@ -615,7 +661,43 @@ xY65IK7OQxSq5K5OPFLwN3h/eURo5kwl7jhpJhJbFL4I46OkpgqWHxQEqSxQnS0d
 AC62ApwWkm42i0/DGODms2tnGL/DaCiTkgEE+8EEF9kfvQDtMoUDNvIkl7Vvm914
 -----END CERTIFICATE-----};
 
+  my $ca_key_vorwerk = q{-----BEGIN CERTIFICATE-----
+MIIFCTCCA/GgAwIBAgIJAMOv+HZbfpj5MA0GCSqGSIb3DQEBBQUAMIGzMQswCQYD
+VQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UEBxMJ
+V3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQLEwVD
+bG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEWH3Zv
+cndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb20wHhcNMTUwNjMwMDkzMzM0WhcN
+NDUwNjIyMDkzMzM0WjCBszELMAkGA1UEBhMCREUxHDAaBgNVBAgTE05vcmRyaGVp
+bi1XZXN0ZmFsZW4xEjAQBgNVBAcTCVd1cHBlcnRhbDEZMBcGA1UEChQQVm9yd2Vy
+ayAmIENvLiBLRzEOMAwGA1UECxMFQ2xvdWQxFzAVBgNVBAMUDioua3NlY29zeXMu
+Y29tMS4wLAYJKoZIhvcNAQkBFh92b3J3ZXJrLWNsb3VkQG5lYXRvcm9ib3RpY3Mu
+Y29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7gtMukRfXrkNB5/C
+kSyRYWC7Na8QA7ryRUY1pk/NiuehHCG5DfLUNrtBauJPTSrLIrEQGo+E07WYDUmg
+7vTeIwUgUrp1EAPe/2ebL8/z+U74o46vVo4r7x2ANd1CP7nUqcwXaPVOCwvZmWT0
+5sdpOkeUbjqeaIGKATEfFYp0/58xaQwLiVh3ujd9CfsB+7ttH6H4NF9iU0xZuqO4
+A5pQVrUEme+wwj3XrSLDpQehvjNG9nsA1urmdaPXSMHUSvCdasuxCHVmzyrP8+78
+Luum6lGKxxfW/uC2zXXTlyVtNUkJJji+JGIkZ+wY9OXflW213zeDIHdAhbvPxJT0
+CnQJawIDAQABo4IBHDCCARgwHQYDVR0OBBYEFNO5y/NI8+UR3GhGZ7ru6EMO+soU
+MIHoBgNVHSMEgeAwgd2AFNO5y/NI8+UR3GhGZ7ru6EMO+soUoYG5pIG2MIGzMQsw
+CQYDVQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UE
+BxMJV3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQL
+EwVDbG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEW
+H3ZvcndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQDDr/h2W36Y+TAMBgNV
+HRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQCgcAC1QbiITOdesQcoEzSCULXE
+3DzOg3Cs6sSBMc8uZ+LRRaJNEvzR6QVA9l1poKY0yQQ7U32xFBadxXGFk5YZlMr+
+MkFzcQxywTKuGDCkOqf8M6NtZjmH3DNAP9bBHhMb80IVwkZhOM7F5nSbZkDxOANo
+O8KtJgpH5rQWGh3FH0SaV0VCjIBK6fLuGZmGvrN06T4bl08QBa2iaodNBQh7IvCG
+eXkUm1eYWDZ4Kzzi7rDgHYHOBlTlDoxfb3ravORZqr0+HYzOP90QbVYtO3a2nyoZ
+L+zBelsUcVFQYsM2oiY6AvCCPQLAYF9X9r9yLBPteLrWZUGjcuzmWe0QEhE+
+-----END CERTIFICATE-----
+    
+  };
+
+  if ($hash->{helper}{VENDOR} eq "vorwerk") {
+    return PEM_string2cert($ca_key_vorwerk);
+  } else {
     return PEM_string2cert($ca_key);
+  }
 }
 
 1;
