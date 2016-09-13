@@ -300,13 +300,13 @@ sub BOTVAC_SendCommand($$;$$) {
       $URL .= BOTVAC_GetBeehiveHost($hash->{helper}{VENDOR});
       $URL .= "/sessions";
       $data = "{\"platform\": \"ios\", \"email\": \"$email\", \"token\": \"$token\", \"password\": \"$password\"}";
-      %sslArgs = ( SSL_verify_mode => SSL_VERIFY_NONE );
+      %sslArgs = ( SSL_verify_mode => 0 );
 
     } elsif ($service eq "dashboard") {
       $header .= "\r\nAuthorization: Token token=".ReadingsVal($name, "accessToken", "");
       $URL .= BOTVAC_GetBeehiveHost($hash->{helper}{VENDOR});
       $URL .= "/dashboard";
-      %sslArgs = ( SSL_verify_mode => SSL_VERIFY_NONE );
+      %sslArgs = ( SSL_verify_mode => 0 );
 
     } elsif ($service eq "messages") {
       my $serial = ReadingsVal($name, "serial", "");
