@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.0
+# Version: 0.2.1
 #
 ##############################################################################
 
@@ -37,6 +37,7 @@ use HttpUtils;
 use JSON qw(decode_json);
 use IO::Socket::SSL::Utils qw(PEM_string2cert);
 use Digest::SHA qw(hmac_sha256_hex);
+use Encode qw(encode_utf8);
 
 sub BOTVAC_Set($@);
 sub BOTVAC_Get($@);
@@ -270,7 +271,7 @@ sub BOTVAC_SendCommand($$;$$) {
     my $email       = $hash->{helper}{EMAIL};
     my $password    = $hash->{helper}{PASSWORD};
     my $timestamp   = gettimeofday();
-    my $timeout     = 15;
+    my $timeout     = 20;
     my $header;
     my $data;
 
@@ -408,7 +409,7 @@ sub BOTVAC_ReceiveCommand($$$) {
                 } else {
                     Log3 $name, 4, "BOTVAC $name: RES $service/$cmd - $data";
                 }
-                $return = decode_json( Encode::encode_utf8($data) );
+                $return = decode_json( encode_utf8($data) );
             } else {
                 Log3 $name, 5, "BOTVAC $name: RES ERROR $service\n" . $data;
                 if ( !defined($cmd) || $cmd eq "" ) {
