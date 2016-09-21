@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.3
+# Version: 0.2.4
 #
 ##############################################################################
 
@@ -35,6 +35,7 @@ use warnings;
 use Time::HiRes qw(gettimeofday);
 use HttpUtils;
 use JSON qw(decode_json encode_json);
+use Encode qw(encode_utf8);
 
 sub INDEGO_Set($@);
 sub INDEGO_Get($@);
@@ -462,7 +463,7 @@ sub INDEGO_ReceiveCommand($$$) {
                 } else {
                     Log3 $name, 4, "INDEGO $name: RES $service/$cmd - $data";
                 }
-                $return = decode_json( Encode::encode_utf8($data) );
+                $return = decode_json( encode_utf8($data) );
             } elsif ( $service = "map" ) {
                 if ( !defined($cmd) || $cmd eq "" ) {
                     Log3 $name, 4, "INDEGO $name: RES $service - $data";
