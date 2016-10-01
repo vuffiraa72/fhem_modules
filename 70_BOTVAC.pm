@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.1
+# Version: 0.2.2
 #
 ##############################################################################
 
@@ -123,6 +123,19 @@ sub BOTVAC_Set($@) {
     $usage .= " resume:noArg"            if ( ReadingsVal($name, ".resume", "0") );
     $usage .= " sendToBase:noArg"        if ( ReadingsVal($name, ".goToBase", "0") );
     $usage .= " schedule:on,off";
+    $usage .= " syncRobots:noArg";
+    
+    my @robots;
+    if (defined($hash->{helper}{ROBOTS})) {
+      @robots = @{$hash->{helper}{ROBOTS}};
+      if (@robots > 1) {
+        $usage .= " setRobot:";
+        for (my $i = 0; $i < @robots; $i++) {
+          $usage .= "," if ($i > 0);
+          $usage .= $robots[$i]->{name};
+        }
+      }
+    }
 
     my $cmd = '';
     my $result;
@@ -148,9 +161,11 @@ sub BOTVAC_Set($@) {
         return "No argument given" if ( !defined( $a[2] ) );
 
         my $params = {
-          "category"  => "3",
-          "mode"      => $a[2] eq "Eco" ? "1" : "2",
-          "modifier"  => "1"
+          "category"   => "3",
+          "mode"       => $a[2] eq "Eco" ? "1" : "2",
+          "modifier"   => "1",
+          "spotWidth"  => "200",
+          "spotHeight" => "200"
         };
         BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params );
     }
@@ -202,6 +217,28 @@ sub BOTVAC_Set($@) {
         } else {
             BOTVAC_SendCommand( $hash, "messages", "disableSchedule" );
         }
+    }
+
+    # syncRobots
+    elsif ( $a[1] eq "syncRobots" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+
+        BOTVAC_SendCommand( $hash, "dashboard" );
+    }
+
+    # setRobot
+    elsif ( $a[1] eq "setRobot" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        my $robot = 0;
+        while($a[2] ne $robots[$robot]->{name} and $robot + 1 < @robots) {
+          $robot++;
+        }
+        readingsBeginUpdate($hash);
+        BOTVAC_SetRobot($hash, $robot);
+        readingsEndUpdate( $hash, 1 );
     }
 
     # return usage hint
@@ -455,6 +492,11 @@ sub BOTVAC_ReceiveCommand($$$) {
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".resume",   $availableCommands->{resume});
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".goToBase", $availableCommands->{goToBase});
               }
+              if ( ref($return->{meta}) eq "HASH" ) {
+                my $meta = $return->{meta};
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "model",    $meta->{modelName});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "firmware", $meta->{firmware});
+              }
               BOTVAC_ReadingsBulkUpdateIfChanged(
                   $hash,
                   "state",
@@ -488,13 +530,20 @@ sub BOTVAC_ReceiveCommand($$$) {
         elsif ( $service eq "dashboard" ) {
           if ( ref($return) eq "HASH" ) {
             if ( ref($return->{robots}) eq "ARRAY" ) {
-              my $robot = $return->{robots}[0];
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "serial",    $robot->{serial});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "name",      $robot->{name});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "model",     $robot->{model});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "secretKey", $robot->{secret_key});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "macAddr",   $robot->{mac_address});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "firmware",  $robot->{firmware});
+              my @robotList = ();
+              my @robots = @{$return->{robots}};
+              for (my $i = 0; $i < @robots; $i++) {
+                my $r = {
+                  "name"      => $robots[$i]->{name},
+                  "serial"    => $robots[$i]->{serial},
+                  "secretKey" => $robots[$i]->{secret_key},
+                  "macAddr"   => $robots[$i]->{mac_address}
+                };
+                push(@robotList, $r);
+              }
+              $hash->{helper}{ROBOTS} = \@robotList;
+
+              BOTVAC_SetRobot($hash, ReadingsNum($name, "robot", 0));
             }
           }
         }
@@ -509,6 +558,20 @@ sub BOTVAC_ReceiveCommand($$$) {
     readingsEndUpdate( $hash, 1 );
 
     return;
+}
+
+sub BOTVAC_SetRobot($$) {
+    my ( $hash, $robot ) = @_;
+    my $name = $hash->{NAME};
+
+    Log3 $name, 4, "BOTVAC $name: set active robot $robot";
+
+    my @robots = @{$hash->{helper}{ROBOTS}};
+    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "serial",    $robots[$robot]->{serial});
+    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "name",      $robots[$robot]->{name});
+    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "secretKey", $robots[$robot]->{secretKey});
+    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "macAddr",   $robots[$robot]->{macAddr});
+    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "robot",     $robot);
 }
 
 ###################################
