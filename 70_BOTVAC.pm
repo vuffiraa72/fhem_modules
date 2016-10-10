@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.2
+# Version: 0.2.3
 #
 ##############################################################################
 
@@ -119,7 +119,9 @@ sub BOTVAC_Set($@) {
     $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
     $usage .= " startSpot:Eco,Turbo"     if ( ReadingsVal($name, ".start", "0") );
     $usage .= " stop:noArg"              if ( ReadingsVal($name, ".stop", "0") );
+    $usage .= " stopToBase:noArg"        if ( ReadingsVal($name, ".stop", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
     $usage .= " pause:noArg"             if ( ReadingsVal($name, ".pause", "0") );
+    $usage .= " pauseToBase:noArg"       if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
     $usage .= " resume:noArg"            if ( ReadingsVal($name, ".resume", "0") );
     $usage .= " sendToBase:noArg"        if ( ReadingsVal($name, ".goToBase", "0") );
     $usage .= " schedule:on,off";
@@ -177,6 +179,14 @@ sub BOTVAC_Set($@) {
         BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
     }
 
+    # stopToBase
+    elsif ( $a[1] eq "stopToBase" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+
+        BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
+        BOTVAC_SendCommand( $hash, "messages", "sendToBase" );
+    }
+
     # pause
     elsif ( $a[1] eq "pause" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
@@ -184,18 +194,19 @@ sub BOTVAC_Set($@) {
         BOTVAC_SendCommand( $hash, "messages", "pauseCleaning" );
     }
 
+    # pauseToBase
+    elsif ( $a[1] eq "pauseToBase" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+
+        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning" );
+        BOTVAC_SendCommand( $hash, "messages", "sendToBase" );
+    }
+
     # resume
     elsif ( $a[1] eq "resume" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
         BOTVAC_SendCommand( $hash, "messages", "resumeCleaning" );
-    }
-
-    # stop
-    elsif ( $a[1] eq "stop" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
-
-        BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
     }
 
     # sendToBase
