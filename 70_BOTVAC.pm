@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.3
+# Version: 0.2.4
 #
 ##############################################################################
 
@@ -35,7 +35,7 @@ use warnings;
 use Time::HiRes qw(gettimeofday);
 use HttpUtils;
 use JSON qw(decode_json);
-use IO::Socket::SSL::Utils qw(PEM_string2cert);
+#use IO::Socket::SSL::Utils qw(PEM_string2cert);
 use Digest::SHA qw(hmac_sha256_hex);
 use Encode qw(encode_utf8);
 
@@ -383,7 +383,8 @@ sub BOTVAC_SendCommand($$;$$) {
       $header .= "\r\nDate: $date";
       $header .= "\r\nAuthorization: NEATOAPP $hmac";
 
-      %sslArgs = ( SSL_ca =>  [ BOTVAC_GetCAKey( $hash ) ] );
+      #%sslArgs = ( SSL_ca =>  [ BOTVAC_GetCAKey( $hash ) ] );
+      %sslArgs = ( SSL_verify_mode => 0 );
     }
 
     # send request via HTTP-POST method
@@ -612,14 +613,16 @@ sub BOTVAC_ReadingsBulkUpdateIfChanged($$$) {
   my ($hash,$reading,$value) = @_;
   my $name = $hash->{NAME};
 
-  readingsBulkUpdate($hash, $reading, $value) if (ReadingsVal($name, $reading, "") ne $value);
+  readingsBulkUpdate($hash, $reading, $value)
+      if (defined($value) and ReadingsVal($name, $reading, "") ne $value);
 }
 
 sub BOTVAC_BuildState($$$$) {
     my ($hash,$state,$action,$error) = @_;
     my $states = {
-        '1'       => "Ready",
-        '2'       => "Action",
+        '0'       => "Invalid",
+        '1'       => "Idle",
+        '2'       => "Busy",
         '3'       => "Paused",
         '4'       => "Error"
     };
@@ -640,11 +643,17 @@ sub BOTVAC_BuildState($$$$) {
 sub BOTVAC_GetActionText($) {
     my ($action) = @_;
     my $actions = {
-        '0'       => "No Action",
-        '1'       => "Cleaning",
+        '0'       => "Invalid",
+        '1'       => "House Cleaning",
         '2'       => "Spot Cleaning",
-        '4'       => "Go to Base",
-        '5'       => "Setup"
+        '3'       => "Manual Cleaning"
+        '4'       => "Docking",
+        '5'       => "User Menu Active",
+        '6'       => "Suspended Cleaning",
+        '7'       => "Updating",
+        '8'       => "Copying Logs",
+        '9'       => "Recovering Location",
+        '10'      => "IEC Test"
     };
 
     if (defined( $actions->{$action})) {
@@ -704,76 +713,76 @@ sub BOTVAC_GetNucleoHost($) {
     }
 }
 
-sub BOTVAC_GetCAKey($) {
-  my ( $hash ) = @_;
-  
-  my $ca_key = q{-----BEGIN CERTIFICATE-----
-MIIE3DCCA8SgAwIBAgIJALHphD11lrmHMA0GCSqGSIb3DQEBBQUAMIGkMQswCQYD
-VQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNVBAcTBk5ld2FyazEbMBkGA1UEChMS
-TmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQLEw5DbG91ZCBTZXJ2aWNlczEZMBcG
-A1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQGCSqGSIb3DQEJARYXY2xvdWRAbmVh
-dG9yb2JvdGljcy5jb20wHhcNMTUwNDIxMTA1OTA4WhcNNDUwNDEzMTA1OTA4WjCB
-pDELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAkNBMQ8wDQYDVQQHEwZOZXdhcmsxGzAZ
-BgNVBAoTEk5lYXRvIFJvYm90aWNzIEluYzEXMBUGA1UECxMOQ2xvdWQgU2Vydmlj
-ZXMxGTAXBgNVBAMUECoubmVhdG9jbG91ZC5jb20xJjAkBgkqhkiG9w0BCQEWF2Ns
-b3VkQG5lYXRvcm9ib3RpY3MuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB
-CgKCAQEAur0WFcJ2YvnL3dtXJFv3lfCQtELLHVcux88tH7HN/FTeUvCqdleDNv4S
-mXWgxVOdUUuhV885wppYyXNzDDrwCyjPmYj0m1EZ4FqTCcjFmk+xdEJsPsKPgRt5
-QqaO0CA/T7dcIhT/PtQnJtcjn6E6vt2JLhsLz9OazadwjvdkejmfrOL643FGxsIP
-8hu3+JINcfxnmff85zshe0yQH5yIYkmQGUPQz061T6mMzFrED/hx9zDpiB1mfkUm
-uG3rBVcZWtrdyMvqB9LB1vqKgcCRANVg5S0GKpySudFlHOZjekXwBsZ+E6tW53qx
-hvlgmlxX80aybYC5hQaNSQBaV9N4lwIDAQABo4IBDTCCAQkwHQYDVR0OBBYEFM3g
-l7v7HP6zQgF90eHIl9coH6jhMIHZBgNVHSMEgdEwgc6AFM3gl7v7HP6zQgF90eHI
-l9coH6jhoYGqpIGnMIGkMQswCQYDVQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNV
-BAcTBk5ld2FyazEbMBkGA1UEChMSTmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQL
-Ew5DbG91ZCBTZXJ2aWNlczEZMBcGA1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQG
-CSqGSIb3DQEJARYXY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQCx6YQ9dZa5hzAM
-BgNVHRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQB93p+MUmKH+MQI3pEVvPUW
-y+VDB5qt1spE5J0awVwUzhQ7QXkEqgFfOk0kzufvxdha9wz+05E1glQ8l5CzlATu
-kA7V5OsygYB+TgqjvhfFHkSI6TJ8OlKcAJuZ2yQE8s2+LVo92NLwpooZLA6BCahn
-fX+rzmo6b4ylhyX98Tm3upINNH3whV355PJFgk74fw9N7U6cFlBrqXXssKOse2D2
-xY65IK7OQxSq5K5OPFLwN3h/eURo5kwl7jhpJhJbFL4I46OkpgqWHxQEqSxQnS0d
-AC62ApwWkm42i0/DGODms2tnGL/DaCiTkgEE+8EEF9kfvQDtMoUDNvIkl7Vvm914
------END CERTIFICATE-----};
-
-  my $ca_key_vorwerk = q{-----BEGIN CERTIFICATE-----
-MIIFCTCCA/GgAwIBAgIJAMOv+HZbfpj5MA0GCSqGSIb3DQEBBQUAMIGzMQswCQYD
-VQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UEBxMJ
-V3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQLEwVD
-bG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEWH3Zv
-cndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb20wHhcNMTUwNjMwMDkzMzM0WhcN
-NDUwNjIyMDkzMzM0WjCBszELMAkGA1UEBhMCREUxHDAaBgNVBAgTE05vcmRyaGVp
-bi1XZXN0ZmFsZW4xEjAQBgNVBAcTCVd1cHBlcnRhbDEZMBcGA1UEChQQVm9yd2Vy
-ayAmIENvLiBLRzEOMAwGA1UECxMFQ2xvdWQxFzAVBgNVBAMUDioua3NlY29zeXMu
-Y29tMS4wLAYJKoZIhvcNAQkBFh92b3J3ZXJrLWNsb3VkQG5lYXRvcm9ib3RpY3Mu
-Y29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7gtMukRfXrkNB5/C
-kSyRYWC7Na8QA7ryRUY1pk/NiuehHCG5DfLUNrtBauJPTSrLIrEQGo+E07WYDUmg
-7vTeIwUgUrp1EAPe/2ebL8/z+U74o46vVo4r7x2ANd1CP7nUqcwXaPVOCwvZmWT0
-5sdpOkeUbjqeaIGKATEfFYp0/58xaQwLiVh3ujd9CfsB+7ttH6H4NF9iU0xZuqO4
-A5pQVrUEme+wwj3XrSLDpQehvjNG9nsA1urmdaPXSMHUSvCdasuxCHVmzyrP8+78
-Luum6lGKxxfW/uC2zXXTlyVtNUkJJji+JGIkZ+wY9OXflW213zeDIHdAhbvPxJT0
-CnQJawIDAQABo4IBHDCCARgwHQYDVR0OBBYEFNO5y/NI8+UR3GhGZ7ru6EMO+soU
-MIHoBgNVHSMEgeAwgd2AFNO5y/NI8+UR3GhGZ7ru6EMO+soUoYG5pIG2MIGzMQsw
-CQYDVQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UE
-BxMJV3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQL
-EwVDbG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEW
-H3ZvcndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQDDr/h2W36Y+TAMBgNV
-HRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQCgcAC1QbiITOdesQcoEzSCULXE
-3DzOg3Cs6sSBMc8uZ+LRRaJNEvzR6QVA9l1poKY0yQQ7U32xFBadxXGFk5YZlMr+
-MkFzcQxywTKuGDCkOqf8M6NtZjmH3DNAP9bBHhMb80IVwkZhOM7F5nSbZkDxOANo
-O8KtJgpH5rQWGh3FH0SaV0VCjIBK6fLuGZmGvrN06T4bl08QBa2iaodNBQh7IvCG
-eXkUm1eYWDZ4Kzzi7rDgHYHOBlTlDoxfb3ravORZqr0+HYzOP90QbVYtO3a2nyoZ
-L+zBelsUcVFQYsM2oiY6AvCCPQLAYF9X9r9yLBPteLrWZUGjcuzmWe0QEhE+
------END CERTIFICATE-----
-    
-  };
-
-  if ($hash->{helper}{VENDOR} eq "vorwerk") {
-    return PEM_string2cert($ca_key_vorwerk);
-  } else {
-    return PEM_string2cert($ca_key);
-  }
-}
+#sub BOTVAC_GetCAKey($) {
+#  my ( $hash ) = @_;
+#  
+#  my $ca_key = q{-----BEGIN CERTIFICATE-----
+#MIIE3DCCA8SgAwIBAgIJALHphD11lrmHMA0GCSqGSIb3DQEBBQUAMIGkMQswCQYD
+#VQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNVBAcTBk5ld2FyazEbMBkGA1UEChMS
+#TmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQLEw5DbG91ZCBTZXJ2aWNlczEZMBcG
+#A1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQGCSqGSIb3DQEJARYXY2xvdWRAbmVh
+#dG9yb2JvdGljcy5jb20wHhcNMTUwNDIxMTA1OTA4WhcNNDUwNDEzMTA1OTA4WjCB
+#pDELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAkNBMQ8wDQYDVQQHEwZOZXdhcmsxGzAZ
+#BgNVBAoTEk5lYXRvIFJvYm90aWNzIEluYzEXMBUGA1UECxMOQ2xvdWQgU2Vydmlj
+#ZXMxGTAXBgNVBAMUECoubmVhdG9jbG91ZC5jb20xJjAkBgkqhkiG9w0BCQEWF2Ns
+#b3VkQG5lYXRvcm9ib3RpY3MuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB
+#CgKCAQEAur0WFcJ2YvnL3dtXJFv3lfCQtELLHVcux88tH7HN/FTeUvCqdleDNv4S
+#mXWgxVOdUUuhV885wppYyXNzDDrwCyjPmYj0m1EZ4FqTCcjFmk+xdEJsPsKPgRt5
+#QqaO0CA/T7dcIhT/PtQnJtcjn6E6vt2JLhsLz9OazadwjvdkejmfrOL643FGxsIP
+#8hu3+JINcfxnmff85zshe0yQH5yIYkmQGUPQz061T6mMzFrED/hx9zDpiB1mfkUm
+#uG3rBVcZWtrdyMvqB9LB1vqKgcCRANVg5S0GKpySudFlHOZjekXwBsZ+E6tW53qx
+#hvlgmlxX80aybYC5hQaNSQBaV9N4lwIDAQABo4IBDTCCAQkwHQYDVR0OBBYEFM3g
+#l7v7HP6zQgF90eHIl9coH6jhMIHZBgNVHSMEgdEwgc6AFM3gl7v7HP6zQgF90eHI
+#l9coH6jhoYGqpIGnMIGkMQswCQYDVQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNV
+#BAcTBk5ld2FyazEbMBkGA1UEChMSTmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQL
+#Ew5DbG91ZCBTZXJ2aWNlczEZMBcGA1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQG
+#CSqGSIb3DQEJARYXY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQCx6YQ9dZa5hzAM
+#BgNVHRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQB93p+MUmKH+MQI3pEVvPUW
+#y+VDB5qt1spE5J0awVwUzhQ7QXkEqgFfOk0kzufvxdha9wz+05E1glQ8l5CzlATu
+#kA7V5OsygYB+TgqjvhfFHkSI6TJ8OlKcAJuZ2yQE8s2+LVo92NLwpooZLA6BCahn
+#fX+rzmo6b4ylhyX98Tm3upINNH3whV355PJFgk74fw9N7U6cFlBrqXXssKOse2D2
+#xY65IK7OQxSq5K5OPFLwN3h/eURo5kwl7jhpJhJbFL4I46OkpgqWHxQEqSxQnS0d
+#AC62ApwWkm42i0/DGODms2tnGL/DaCiTkgEE+8EEF9kfvQDtMoUDNvIkl7Vvm914
+#-----END CERTIFICATE-----};
+#
+#  my $ca_key_vorwerk = q{-----BEGIN CERTIFICATE-----
+#MIIFCTCCA/GgAwIBAgIJAMOv+HZbfpj5MA0GCSqGSIb3DQEBBQUAMIGzMQswCQYD
+#VQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UEBxMJ
+#V3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQLEwVD
+#bG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEWH3Zv
+#cndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb20wHhcNMTUwNjMwMDkzMzM0WhcN
+#NDUwNjIyMDkzMzM0WjCBszELMAkGA1UEBhMCREUxHDAaBgNVBAgTE05vcmRyaGVp
+#bi1XZXN0ZmFsZW4xEjAQBgNVBAcTCVd1cHBlcnRhbDEZMBcGA1UEChQQVm9yd2Vy
+#ayAmIENvLiBLRzEOMAwGA1UECxMFQ2xvdWQxFzAVBgNVBAMUDioua3NlY29zeXMu
+#Y29tMS4wLAYJKoZIhvcNAQkBFh92b3J3ZXJrLWNsb3VkQG5lYXRvcm9ib3RpY3Mu
+#Y29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7gtMukRfXrkNB5/C
+#kSyRYWC7Na8QA7ryRUY1pk/NiuehHCG5DfLUNrtBauJPTSrLIrEQGo+E07WYDUmg
+#7vTeIwUgUrp1EAPe/2ebL8/z+U74o46vVo4r7x2ANd1CP7nUqcwXaPVOCwvZmWT0
+#5sdpOkeUbjqeaIGKATEfFYp0/58xaQwLiVh3ujd9CfsB+7ttH6H4NF9iU0xZuqO4
+#A5pQVrUEme+wwj3XrSLDpQehvjNG9nsA1urmdaPXSMHUSvCdasuxCHVmzyrP8+78
+#Luum6lGKxxfW/uC2zXXTlyVtNUkJJji+JGIkZ+wY9OXflW213zeDIHdAhbvPxJT0
+#CnQJawIDAQABo4IBHDCCARgwHQYDVR0OBBYEFNO5y/NI8+UR3GhGZ7ru6EMO+soU
+#MIHoBgNVHSMEgeAwgd2AFNO5y/NI8+UR3GhGZ7ru6EMO+soUoYG5pIG2MIGzMQsw
+#CQYDVQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UE
+#BxMJV3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQL
+#EwVDbG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEW
+#H3ZvcndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQDDr/h2W36Y+TAMBgNV
+#HRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQCgcAC1QbiITOdesQcoEzSCULXE
+#3DzOg3Cs6sSBMc8uZ+LRRaJNEvzR6QVA9l1poKY0yQQ7U32xFBadxXGFk5YZlMr+
+#MkFzcQxywTKuGDCkOqf8M6NtZjmH3DNAP9bBHhMb80IVwkZhOM7F5nSbZkDxOANo
+#O8KtJgpH5rQWGh3FH0SaV0VCjIBK6fLuGZmGvrN06T4bl08QBa2iaodNBQh7IvCG
+#eXkUm1eYWDZ4Kzzi7rDgHYHOBlTlDoxfb3ravORZqr0+HYzOP90QbVYtO3a2nyoZ
+#L+zBelsUcVFQYsM2oiY6AvCCPQLAYF9X9r9yLBPteLrWZUGjcuzmWe0QEhE+
+#-----END CERTIFICATE-----
+#    
+#  };
+#
+#  if ($hash->{helper}{VENDOR} eq "vorwerk") {
+#    return PEM_string2cert($ca_key_vorwerk);
+#  } else {
+#    return PEM_string2cert($ca_key);
+#  }
+#}
 
 1;
 =pod
