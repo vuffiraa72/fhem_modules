@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.4
+# Version: 0.2.5
 #
 ##############################################################################
 
@@ -124,8 +124,7 @@ sub BOTVAC_Set($@) {
     $usage .= " pauseToBase:noArg"       if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
     $usage .= " resume:noArg"            if ( ReadingsVal($name, ".resume", "0") );
     $usage .= " sendToBase:noArg"        if ( ReadingsVal($name, ".goToBase", "0") );
-    $usage .= " schedule:on,off";
-    $usage .= " syncRobots:noArg";
+    $usage .= " reloadMaps:noArg schedule:on,off syncRobots:noArg";
     
     my @robots;
     if (defined($hash->{helper}{ROBOTS})) {
@@ -251,6 +250,13 @@ sub BOTVAC_Set($@) {
         BOTVAC_SetRobot($hash, $robot);
         readingsEndUpdate( $hash, 1 );
     }
+    
+    # reloadMaps
+    elsif ( $a[1] eq "reloadMaps" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+      
+        BOTVAC_SendCommand( $hash, "maps" );
+    }
 
     # return usage hint
     else {
@@ -303,6 +309,8 @@ sub BOTVAC_Define($$) {
     RemoveInternalTimer($hash);
     InternalTimer( gettimeofday() + 2, "BOTVAC_GetStatus", $hash, 1 );
 
+    BOTVAC_addExtension($name, "BOTVAC_GetMap", "BOTVAC/$name/map");
+
     return;
 }
 
@@ -311,6 +319,27 @@ sub BOTVAC_Define($$) {
 #   Begin of helper functions
 #
 ############################################################################################################
+
+#########################
+sub BOTVAC_addExtension($$$) {
+    my ( $name, $func, $link ) = @_;
+
+    my $url = "/$link";
+    Log3 $name, 2, "Registering BOTVAC $name for URL $url...";
+    $data{FWEXT}{$url}{deviceName} = $name;
+    $data{FWEXT}{$url}{FUNC}       = $func;
+    $data{FWEXT}{$url}{LINK}       = $link;
+}
+
+#########################
+sub BOTVAC_removeExtension($) {
+    my ($link) = @_;
+
+    my $url  = "/$link";
+    my $name = $data{FWEXT}{$url}{deviceName};
+    Log3 $name, 2, "Unregistering BOTVAC $name for URL $url...";
+    delete $data{FWEXT}{$url};
+}
 
 ###################################
 sub BOTVAC_SendCommand($$;$$) {
@@ -357,6 +386,15 @@ sub BOTVAC_SendCommand($$;$$) {
       $URL .= "/dashboard";
       %sslArgs = ( SSL_verify_mode => 0 );
 
+    } elsif ($service eq "maps") {
+      my $serial = ReadingsVal($name, "serial", "");
+      return if ($serial eq "");
+
+      $header .= "\r\nAuthorization: Token token=".ReadingsVal($name, "accessToken", "");
+      $URL .= BOTVAC_GetBeehiveHost($hash->{helper}{VENDOR});
+      $URL .= "/users/me/robots/$serial/maps";
+      %sslArgs = ( SSL_verify_mode => 0 );
+
     } elsif ($service eq "messages") {
       my $serial = ReadingsVal($name, "serial", "");
       return if ($serial eq "");
@@ -385,6 +423,8 @@ sub BOTVAC_SendCommand($$;$$) {
 
       #%sslArgs = ( SSL_ca =>  [ BOTVAC_GetCAKey( $hash ) ] );
       %sslArgs = ( SSL_verify_mode => 0 );
+    } elsif ($service eq "loadmap") {
+      $URL = $cmd;
     }
 
     # send request via HTTP-POST method
@@ -423,6 +463,8 @@ sub BOTVAC_ReceiveCommand($$$) {
     my $cmd     = $param->{cmd};
 
     my $rc = ( $param->{buf} ) ? $param->{buf} : $param;
+    my $successor;
+    my $loadMap;
     my $return;
     
     Log3 $name, 5, "BOTVAC $name: called function BOTVAC_ReceiveCommand() rc: $rc err: $err data: $data ";
@@ -452,7 +494,9 @@ sub BOTVAC_ReceiveCommand($$$) {
         }
 
         if ( $data ne "" ) {
-            if ( $data =~ /^{/ || $data =~ /^\[/ ) {
+            if ( $service eq "loadmap" ) {
+                # use $data later
+            } elsif ( $data =~ /^{/ || $data =~ /^\[/ ) {
                 if ( !defined($cmd) || $cmd eq "" ) {
                     Log3 $name, 4, "BOTVAC $name: RES $service - $data";
                 } else {
@@ -474,6 +518,10 @@ sub BOTVAC_ReceiveCommand($$$) {
         if ( $service eq "messages" ) {
           if ( $cmd eq "getRobotState" ) {
             if ( ref($return) eq "HASH" ) {
+              $successor = "maps"
+                  if (($return->{state} eq "1" or $return->{state} eq "4") and   # Idle or Error
+                      $return->{state} ne ReadingsVal($name, "stateId", $return->{state}));
+              
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "version", $return->{version});
               BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "result", $return->{result});
               BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "error", $return->{error});
@@ -541,7 +589,7 @@ sub BOTVAC_ReceiveCommand($$$) {
         # dashboard
         elsif ( $service eq "dashboard" ) {
           if ( ref($return) eq "HASH" ) {
-            if ( ref($return->{robots}) eq "ARRAY" ) {
+            if ( ref($return->{robots} ) eq "ARRAY" ) {
               my @robotList = ();
               my @robots = @{$return->{robots}};
               for (my $i = 0; $i < @robots; $i++) {
@@ -556,10 +604,34 @@ sub BOTVAC_ReceiveCommand($$$) {
               $hash->{helper}{ROBOTS} = \@robotList;
 
               BOTVAC_SetRobot($hash, ReadingsNum($name, "robot", 0));
+              
+              $successor = "maps";
             }
           }
         }
     
+        # maps
+        elsif ( $service eq "maps" ) {
+          if ( ref($return) eq "HASH" ) {
+            if ( ref($return->{maps} ) eq "ARRAY" ) {
+              my @mapList = ();
+              my @maps = @{$return->{maps}};
+              # take first - newest
+              my $map = $maps[0];
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_id",   $map->{id});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date", $map->{generated_at});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_area", $map->{cleaned_area});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".map_url", $map->{url});
+              $loadMap = 1;
+            }
+          }
+        }
+        
+        # loadmap
+        elsif ( $service eq "loadmap" ) {
+          readingsBulkUpdate($hash, ".map_cache", $data)
+        }
+
         # all other command results
         else {
             Log3 $name, 2, "BOTVAC $name: ERROR: method to handle response of $service not implemented";
@@ -568,6 +640,15 @@ sub BOTVAC_ReceiveCommand($$$) {
     }
 
     readingsEndUpdate( $hash, 1 );
+    
+    if ($loadMap) {
+      my $url = ReadingsVal($name, ".map_url", "");
+      BOTVAC_SendCommand($hash, "loadmap", $url) if ($url ne "");
+    }
+    
+    if ($successor) {
+      BOTVAC_SendCommand($hash, $successor);
+    }
 
     return;
 }
@@ -595,6 +676,8 @@ sub BOTVAC_Undefine($$) {
 
     # Stop the internal GetStatus-Loop and exit
     RemoveInternalTimer($hash);
+
+    BOTVAC_removeExtension("BOTVAC/$name/map");
 
     return;
 }
@@ -627,7 +710,9 @@ sub BOTVAC_BuildState($$$$) {
         '4'       => "Error"
     };
 
-    if ($state == 2) {
+    if (!defined($state)) {
+        return "Unknown";
+    } elsif ($state == 2) {
         return BOTVAC_GetActionText($action);
     } elsif ($state == 3) {
         return "Paused: ".BOTVAC_GetActionText($action);
@@ -711,6 +796,32 @@ sub BOTVAC_GetNucleoHost($) {
     } else {
         return $vendors->{neato};
     }
+}
+
+sub BOTVAC_ShowMap($;$$) {
+    my ($name,$width,$height) = @_;
+
+    my $img = '<img src="/fhem/BOTVAC/'.$name.'/map"';
+    $img   .= ' width="'.$width.'"'  if (defined($width));
+    $img   .= ' width="'.$height.'"' if (defined($height));
+    $img   .= ' alt="Map currently not available">';
+    
+    return $img;
+}
+
+sub BOTVAC_GetMap() {
+    my ($request) = @_;
+    
+    if ($request =~ /^\/BOTVAC\/(\w+)\/map/) {
+      my $name   = $1;
+      my $width  = $3;
+      my $height = $5;
+      
+      return ("image/png", ReadingsVal($name, ".map_cache", ""));
+    }
+
+    return ("text/plain; charset=utf-8", "No BOTVAC device for webhook $request");
+    
 }
 
 #sub BOTVAC_GetCAKey($) {
