@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.5
+# Version: 0.2.6
 #
 ##############################################################################
 
@@ -519,8 +519,9 @@ sub BOTVAC_ReceiveCommand($$$) {
           if ( $cmd eq "getRobotState" ) {
             if ( ref($return) eq "HASH" ) {
               $successor = "maps"
-                  if (($return->{state} eq "1" or $return->{state} eq "4") and   # Idle or Error
-                      $return->{state} ne ReadingsVal($name, "stateId", $return->{state}));
+                  if (defined($return->{state}) and
+                      ($return->{state} == 1 or $return->{state} == 4) and   # Idle or Error
+                      $return->{state} != ReadingsNum($name, "stateId", $return->{state}));
               
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "version", $return->{version});
               BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "result", $return->{result});
