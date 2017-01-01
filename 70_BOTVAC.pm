@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.6
+# Version: 0.2.7
 #
 ##############################################################################
 
@@ -182,8 +182,7 @@ sub BOTVAC_Set($@) {
     elsif ( $a[1] eq "stopToBase" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
-        BOTVAC_SendCommand( $hash, "messages", "sendToBase" );
+        BOTVAC_SendCommand( $hash, "messages", "stopCleaning", "", "messages/sendToBase" );
     }
 
     # pause
@@ -197,8 +196,7 @@ sub BOTVAC_Set($@) {
     elsif ( $a[1] eq "pauseToBase" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning" );
-        BOTVAC_SendCommand( $hash, "messages", "sendToBase" );
+        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning", "", "messages/sendToBase" );
     }
 
     # resume
@@ -342,8 +340,8 @@ sub BOTVAC_removeExtension($) {
 }
 
 ###################################
-sub BOTVAC_SendCommand($$;$$) {
-    my ( $hash, $service, $cmd, $params ) = @_;
+sub BOTVAC_SendCommand($$;$$$) {
+    my ( $hash, $service, $cmd, $params, $successor ) = @_;
     my $name        = $hash->{NAME};
     my $email       = $hash->{helper}{EMAIL};
     my $password    = $hash->{helper}{PASSWORD};
@@ -405,7 +403,7 @@ sub BOTVAC_SendCommand($$;$$) {
       $URL .= "/robots/$serial/messages";
       
       $data = "{\"reqId\":\"1\",\"cmd\":\"$cmd\"";
-      if (defined($params)) {
+      if (defined($params) and ref($params) eq "HASH") {
         $data .= ",\"params\":{";
         foreach( keys $params ) {
           $data .= "\"$_\":\"$params->{$_}\""; 
@@ -445,6 +443,7 @@ sub BOTVAC_SendCommand($$;$$) {
             hash        => $hash,
             service     => $service,
             cmd         => $cmd,
+            successor   => $successor,
             timestamp   => $timestamp,
             sslargs     => { %sslArgs },
             callback    => \&BOTVAC_ReceiveCommand,
@@ -457,13 +456,14 @@ sub BOTVAC_SendCommand($$;$$) {
 ###################################
 sub BOTVAC_ReceiveCommand($$$) {
     my ( $param, $err, $data ) = @_;
-    my $hash    = $param->{hash};
-    my $name    = $hash->{NAME};
-    my $service = $param->{service};
-    my $cmd     = $param->{cmd};
+    my $hash      = $param->{hash};
+    my $name      = $hash->{NAME};
+    my $service   = $param->{service};
+    my $cmd       = $param->{cmd};
+    my $successor = $param->{successor};
 
     my $rc = ( $param->{buf} ) ? $param->{buf} : $param;
-    my $successor;
+    
     my $loadMap;
     my $return;
     
@@ -647,8 +647,12 @@ sub BOTVAC_ReceiveCommand($$$) {
       BOTVAC_SendCommand($hash, "loadmap", $url) if ($url ne "");
     }
     
-    if ($successor) {
-      BOTVAC_SendCommand($hash, $successor);
+    if (defined($successor)) {
+      if ($successor =~ /(\w+)\/(\w+)/) {
+        BOTVAC_SendCommand($hash, $1, $2);
+      } else {
+        BOTVAC_SendCommand($hash, $successor);
+      }
     }
 
     return;
