@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.7
+# Version: 0.2.8
 #
 ##############################################################################
 
@@ -76,8 +76,7 @@ sub BOTVAC_GetStatus($;$) {
 
     # check device availability
     if (!$update) {
-      BOTVAC_SendCommand( $hash, "messages", "getRobotState" );
-      BOTVAC_SendCommand( $hash, "messages", "getSchedule" );
+      BOTVAC_SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
     }
 
     return;
@@ -119,7 +118,6 @@ sub BOTVAC_Set($@) {
     $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
     $usage .= " startSpot:Eco,Turbo"     if ( ReadingsVal($name, ".start", "0") );
     $usage .= " stop:noArg"              if ( ReadingsVal($name, ".stop", "0") );
-    $usage .= " stopToBase:noArg"        if ( ReadingsVal($name, ".stop", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
     $usage .= " pause:noArg"             if ( ReadingsVal($name, ".pause", "0") );
     $usage .= " pauseToBase:noArg"       if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
     $usage .= " resume:noArg"            if ( ReadingsVal($name, ".resume", "0") );
@@ -153,7 +151,7 @@ sub BOTVAC_Set($@) {
           "mode"      => $a[2] eq "Eco" ? "1" : "2",
           "modifier"  => "1"
         };
-        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params );
+        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params, (["messages", "getRobotState"]) );
     }
 
     elsif ( $a[1] eq "startSpot" ) {
@@ -168,42 +166,35 @@ sub BOTVAC_Set($@) {
           "spotWidth"  => "200",
           "spotHeight" => "200"
         };
-        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params );
+        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params, (["messages", "getRobotState"]) );
     }
 
     # stop
     elsif ( $a[1] eq "stop" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
-    }
-
-    # stopToBase
-    elsif ( $a[1] eq "stopToBase" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
-
-        BOTVAC_SendCommand( $hash, "messages", "stopCleaning", "", "messages/sendToBase" );
+        BOTVAC_SendCommand( $hash, "messages", "stopCleaning", undef, (["messages", "getRobotState"]) );
     }
 
     # pause
     elsif ( $a[1] eq "pause" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning" );
+        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning", undef, (["messages", "getRobotState"]) );
     }
 
     # pauseToBase
     elsif ( $a[1] eq "pauseToBase" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning", "", "messages/sendToBase" );
+        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning", undef, (["messages", "sendToBase"]) );
     }
 
     # resume
     elsif ( $a[1] eq "resume" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "resumeCleaning" );
+        BOTVAC_SendCommand( $hash, "messages", "resumeCleaning", undef, (["messages", "getRobotState"]) );
     }
 
     # sendToBase
@@ -340,8 +331,8 @@ sub BOTVAC_removeExtension($) {
 }
 
 ###################################
-sub BOTVAC_SendCommand($$;$$$) {
-    my ( $hash, $service, $cmd, $params, $successor ) = @_;
+sub BOTVAC_SendCommand($$;$$@) {
+    my ( $hash, $service, $cmd, $params, @successor ) = @_;
     my $name        = $hash->{NAME};
     my $email       = $hash->{helper}{EMAIL};
     my $password    = $hash->{helper}{PASSWORD};
@@ -358,7 +349,9 @@ sub BOTVAC_SendCommand($$;$$$) {
     
     my %sslArgs;
 
-    BOTVAC_CheckRegistration($hash) if ($service ne "sessions" && $service ne "dashboard");
+    if ($service ne "sessions" && $service ne "dashboard") {
+        return if (BOTVAC_CheckRegistration($hash, $service, $cmd, $params, @successor));
+    }
 
     if ( !defined($cmd) ) {
         Log3 $name, 4, "BOTVAC $name: REQ $service";
@@ -367,6 +360,14 @@ sub BOTVAC_SendCommand($$;$$$) {
         Log3 $name, 4, "BOTVAC $name: REQ $service/$cmd";
     }
     Log3 $name, 4, "BOTVAC $name: REQ parameters $params" if (defined($params));
+    my $msg = "BOTVAC $name: REQ successors";
+    my @succ_item;
+    for (my $i = 0; $i < @successor; $i++) {
+      @succ_item = @{$successor[$i]};
+      $msg .= " $i: ";
+      $msg .= join(",", map { defined($_) ? $_ : '' } @succ_item);
+    }
+    Log3 $name, 4, $msg;
 
     $header = "Accept: application/vnd.neato.nucleo.v1";
     $header .= "\r\nContent-Type: application/json";
@@ -405,7 +406,7 @@ sub BOTVAC_SendCommand($$;$$$) {
       $data = "{\"reqId\":\"1\",\"cmd\":\"$cmd\"";
       if (defined($params) and ref($params) eq "HASH") {
         $data .= ",\"params\":{";
-        foreach( keys $params ) {
+        foreach( keys %$params ) {
           $data .= "\"$_\":\"$params->{$_}\""; 
         }
         $data .= "}";
@@ -443,7 +444,7 @@ sub BOTVAC_SendCommand($$;$$$) {
             hash        => $hash,
             service     => $service,
             cmd         => $cmd,
-            successor   => $successor,
+            successor   => \@successor,
             timestamp   => $timestamp,
             sslargs     => { %sslArgs },
             callback    => \&BOTVAC_ReceiveCommand,
@@ -460,7 +461,7 @@ sub BOTVAC_ReceiveCommand($$$) {
     my $name      = $hash->{NAME};
     my $service   = $param->{service};
     my $cmd       = $param->{cmd};
-    my $successor = $param->{successor};
+    my @successor = @{$param->{successor}};
 
     my $rc = ( $param->{buf} ) ? $param->{buf} : $param;
     
@@ -492,6 +493,14 @@ sub BOTVAC_ReceiveCommand($$$) {
         } else {
             Log3 $name, 4, "BOTVAC $name: RCV $service/$cmd";
         }
+        my $msg = "BOTVAC $name: RCV successors";
+        my @succ_item;
+        for (my $i = 0; $i < @successor; $i++) {
+          @succ_item = @{$successor[$i]};
+          $msg .= " $i: ";
+          $msg .= join(",", map { defined($_) ? $_ : '' } @succ_item);
+        }
+        Log3 $name, 4, $msg;
 
         if ( $data ne "" ) {
             if ( $service eq "loadmap" ) {
@@ -518,7 +527,7 @@ sub BOTVAC_ReceiveCommand($$$) {
         if ( $service eq "messages" ) {
           if ( $cmd eq "getRobotState" ) {
             if ( ref($return) eq "HASH" ) {
-              $successor = "maps"
+              push(@successor , ["maps"])
                   if (defined($return->{state}) and
                       ($return->{state} == 1 or $return->{state} == 4) and   # Idle or Error
                       $return->{state} != ReadingsNum($name, "stateId", $return->{state}));
@@ -606,7 +615,7 @@ sub BOTVAC_ReceiveCommand($$$) {
 
               BOTVAC_SetRobot($hash, ReadingsNum($name, "robot", 0));
               
-              $successor = "maps";
+              push(@successor , ["maps"]);
             }
           }
         }
@@ -647,12 +656,17 @@ sub BOTVAC_ReceiveCommand($$$) {
       BOTVAC_SendCommand($hash, "loadmap", $url) if ($url ne "");
     }
     
-    if (defined($successor)) {
-      if ($successor =~ /(\w+)\/(\w+)/) {
-        BOTVAC_SendCommand($hash, $1, $2);
-      } else {
-        BOTVAC_SendCommand($hash, $successor);
-      }
+    if (@successor) {
+      my @nextCmd = @{shift(@successor)};
+      my $cmdLength = @nextCmd;
+      my $cmdService = $nextCmd[0];
+      my $cmdCmd;
+      my $cmdParams;
+      $cmdCmd    = $nextCmd[1] if ($cmdLength > 1);
+      $cmdParams = $nextCmd[2] if ($cmdLength > 2);
+
+      BOTVAC_SendCommand($hash, $cmdService, $cmdCmd, $cmdParams, @successor)
+          if ($service ne $cmdService or $cmd ne $cmdCmd);
     }
 
     return;
@@ -687,14 +701,30 @@ sub BOTVAC_Undefine($$) {
     return;
 }
 
-sub BOTVAC_CheckRegistration($) {
-  my ( $hash ) = @_;
+sub BOTVAC_CheckRegistration($$$$$) {
+  my ( $hash, $service, $cmd, $params, @successor ) = @_;
   my $name = $hash->{NAME};
 
   if (ReadingsVal($name, "secretKey", "") eq "") {
-    BOTVAC_SendCommand($hash, "sessions") if (ReadingsVal($name, "accessToken", "") eq "");
-    BOTVAC_SendCommand($hash, "dashboard")  if (ReadingsVal($name, "accessToken", "") ne "");
+    my @nextCmd = ($service, $cmd, $params);
+    unshift(@successor, [$service, $cmd, $params]);
+      
+      my @succ_item;
+      my $msg = " successor:";
+      for (my $i = 0; $i < @successor; $i++) {
+        @succ_item = @{$successor[$i]};
+        $msg .= " $i: ";
+        $msg .= join(",", map { defined($_) ? $_ : '' } @succ_item);
+      }
+      Log3 $name, 4, "BOTVAC created".$msg;
+      
+    BOTVAC_SendCommand($hash, "sessions", undef, undef, @successor)   if (ReadingsVal($name, "accessToken", "") eq "");
+    BOTVAC_SendCommand($hash, "dashboard", undef, undef, @successor)  if (ReadingsVal($name, "accessToken", "") ne "");
+    
+    return 1;
   }
+  
+  return;
 }
 
 sub BOTVAC_ReadingsBulkUpdateIfChanged($$$) {
