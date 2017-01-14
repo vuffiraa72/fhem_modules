@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.8
+# Version: 0.2.9
 #
 ##############################################################################
 
@@ -115,8 +115,16 @@ sub BOTVAC_Set($@) {
     return "No Argument given" if ( !defined( $a[1] ) );
 
     my $usage = "Unknown argument " . $a[1] . ", choose one of";
-    $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
-    $usage .= " startSpot:Eco,Turbo"     if ( ReadingsVal($name, ".start", "0") );
+    if (ReadingsVal($name, "srv_houseCleaning", "basic-1") eq "basic-1") {
+      $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
+    } else {
+      $usage .= " startCleaning:Normal,ExtraCare" if ( ReadingsVal($name, ".start", "0") );
+    }
+    if (ReadingsVal($name, "srv_spotCleaning", "basic-1") eq "basic-1") {
+      $usage .= " startSpot:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
+    } else {
+      $usage .= " startSpot:Normal,ExtraCare" if ( ReadingsVal($name, ".start", "0") );
+    }
     $usage .= " stop:noArg"              if ( ReadingsVal($name, ".stop", "0") );
     $usage .= " pause:noArg"             if ( ReadingsVal($name, ".pause", "0") );
     $usage .= " pauseToBase:noArg"       if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
@@ -146,12 +154,16 @@ sub BOTVAC_Set($@) {
 
         return "No argument given" if ( !defined( $a[2] ) );
 
-        my $params = {
-          "category"  => "2",
-          "mode"      => $a[2] eq "Eco" ? "1" : "2",
-          "modifier"  => "1"
-        };
-        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params, (["messages", "getRobotState"]) );
+        my %params;
+        $params{"category"} = "2";
+        if (ReadingsVal($name, "srv_houseCleaning", "basic-1") eq "basic-1") {
+          $params{"mode"} = $a[2] eq "Eco" ? "1" : "2";
+          $params{"modifier"} = "1";
+        } else {
+          $params{"navigationMode"} = $a[2] eq "Normal" ? "1" : "2";
+        }
+
+        BOTVAC_SendCommand( $hash, "messages", "startCleaning", \%params );
     }
 
     elsif ( $a[1] eq "startSpot" ) {
@@ -159,28 +171,33 @@ sub BOTVAC_Set($@) {
 
         return "No argument given" if ( !defined( $a[2] ) );
 
-        my $params = {
-          "category"   => "3",
-          "mode"       => $a[2] eq "Eco" ? "1" : "2",
-          "modifier"   => "1",
-          "spotWidth"  => "200",
-          "spotHeight" => "200"
-        };
-        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $params, (["messages", "getRobotState"]) );
+        my %params;
+        $params{"category"} = "3";
+        if (ReadingsVal($name, "srv_spotCleaning", "basic-1") eq "basic-1") {
+          $params{"mode"} = $a[2] eq "Eco" ? "1" : "2";
+          $params{"modifier"} = "1";
+          $params{"spotWidth"} = "200";
+          $params{"spotHeight"} = "200";
+        } else {
+          $params{"modifier"} = "1";
+          $params{"navigationMode"} = $a[2] eq "Normal" ? "1" : "2";
+        }
+
+        BOTVAC_SendCommand( $hash, "messages", "startCleaning", \%params );
     }
 
     # stop
     elsif ( $a[1] eq "stop" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "stopCleaning", undef, (["messages", "getRobotState"]) );
+        BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
     }
 
     # pause
     elsif ( $a[1] eq "pause" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning", undef, (["messages", "getRobotState"]) );
+        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning" );
     }
 
     # pauseToBase
@@ -194,7 +211,7 @@ sub BOTVAC_Set($@) {
     elsif ( $a[1] eq "resume" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
-        BOTVAC_SendCommand( $hash, "messages", "resumeCleaning", undef, (["messages", "getRobotState"]) );
+        BOTVAC_SendCommand( $hash, "messages", "resumeCleaning" );
     }
 
     # sendToBase
@@ -337,7 +354,7 @@ sub BOTVAC_SendCommand($$;$$@) {
     my $email       = $hash->{helper}{EMAIL};
     my $password    = $hash->{helper}{PASSWORD};
     my $timestamp   = gettimeofday();
-    my $timeout     = 20;
+    my $timeout     = 42;
     my $header;
     my $data;
 
@@ -525,7 +542,24 @@ sub BOTVAC_ReceiveCommand($$$) {
 
         # messages
         if ( $service eq "messages" ) {
-          if ( $cmd eq "getRobotState" ) {
+          if ( $cmd =~ /Schedule/ ) {
+            # getSchedule, enableSchedule, disableSchedule
+            if ( ref($return->{data}) eq "HASH" ) {
+              my $scheduleData = $return->{data};
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "scheduleType",    $scheduleData->{type});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "scheduleEnabled", $scheduleData->{enabled});
+              if (ref($scheduleData->{events}) eq "ARRAY") {
+                my @events = @{$scheduleData->{events}};
+                for (my $i = 0; $i < @events; $i++) {
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."mode",      $events[$i]->{mode})
+                      if (defined($events[$i]->{mode}));
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."day",       $events[$i]->{day});
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime});
+                }
+              }
+            }
+          } else {
+            # getRobotState, startCleaning, pauseCleaning, stopCleaning, resumeCleaning, sendToBase
             if ( ref($return) eq "HASH" ) {
               push(@successor , ["maps"])
                   if (defined($return->{state}) and
@@ -562,6 +596,12 @@ sub BOTVAC_ReceiveCommand($$$) {
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".resume",   $availableCommands->{resume});
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".goToBase", $availableCommands->{goToBase});
               }
+              if ( ref($return->{availableServices}) eq "HASH" ) {
+                my $availableServices = $return->{availableServices};
+                foreach (keys %$availableServices) {
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "srv_$_", $availableServices->{$_});
+                }
+              }
               if ( ref($return->{meta}) eq "HASH" ) {
                 my $meta = $return->{meta};
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "model",    $meta->{modelName});
@@ -571,20 +611,6 @@ sub BOTVAC_ReceiveCommand($$$) {
                   $hash,
                   "state",
                   BOTVAC_BuildState($hash, $return->{state}, $return->{action}, $return->{error}));
-            }
-          } elsif ( $cmd eq "getSchedule" ) {
-            if ( ref($return->{data}) eq "HASH" ) {
-              my $scheduleData = $return->{data};
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "scheduleType",    $scheduleData->{type});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "scheduleEnabled", $scheduleData->{enabled});
-              if (ref($scheduleData->{events}) eq "ARRAY") {
-                my @events = @{$scheduleData->{events}};
-                for (my $i = 0; $i < @events; $i++) {
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."mode",      $events[$i]->{mode});
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."day",       $events[$i]->{day});
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime});
-                }
-              }
             }
           }
         }
