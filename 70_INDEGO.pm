@@ -120,21 +120,10 @@ sub INDEGO_Set($@) {
 
     return "No Argument given" if ( !defined( $a[1] ) );
 
-    my @calendars;
-    foreach ( keys %{ $hash->{READINGS} } ) {
-      if ( $_ =~ /^cal(\d)_.*/ ) {
-        my $cal = $1;
-        my @matches = grep(/$cal/, @calendars);
-        push(@calendars, $cal) if ( ( scalar @matches ) eq "0" );
-      }
-    }
-    @calendars = sort(@calendars);
-    my $calendars = join(",", @calendars);
-
     my $usage = "Unknown argument " . $a[1];
-    $usage .= ", choose one of renewContext:noArg mow:noArg pause:noArg returnToDock:noArg reloadMap:noArg";
+    $usage .= ", choose one of renewContext:noArg mow:noArg pause:noArg returnToDock:noArg reloadMap:noArg smartMode:on,off";
     $usage .= " deleteAlert:noArg" if (ReadingsVal($name, "alert_id", "-") ne "-");
-    $usage .= " calendar:0,$calendars" if ($calendars ne "");
+    $usage .= " calendar:0,1,2,3,4,5";
 
     # mow
     if ( $a[1] eq "mow" ) {
@@ -188,6 +177,15 @@ sub INDEGO_Set($@) {
         return "No argument given" if ( !defined( $a[2] ) );
 
         INDEGO_SendCommand( $hash, "setCalendar", $a[2] );
+    }
+
+    # smartMode
+    elsif ( $a[1] eq "smartMode" ) {
+        Log3 $name, 2, "INDEGO set $name " . $a[1] . " " . $a[2];
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        INDEGO_SendCommand( $hash, "smartMode", $a[2] );
     }
 
     # return usage hint
@@ -328,7 +326,6 @@ sub INDEGO_SendCommand($$;$) {
 
       $URL .= "alerts/$id";
       $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
-      #$data = "{\"device\":\"\", \"os_type\":\"Android\", \"os_version\":\"4.0\", \"dvc_manuf\":\"unknown\", \"dvc_type\":\"unknown\"}";
       $method = "DELETE";
 
     } elsif ($service eq "state") {
@@ -366,6 +363,16 @@ sub INDEGO_SendCommand($$;$) {
       $URL .= "alms/";
       $URL .= ReadingsVal($name, "alm_sn", "");
       $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+
+    } elsif ($service eq "smartMode") {
+      my $smartMode = (defined($type) && $type eq "on") ? "true" : "false";
+      $URL .= "alms/";
+      $URL .= ReadingsVal($name, "alm_sn", "");
+      $URL .= "/predictive";
+      $header = "x-im-context-id: ".ReadingsVal($name, "contextId", "");
+      $header .= "\r\nContent-Type: application/json";
+      $data  = "{\"enabled\":".$smartMode."}";
+      $method = "PUT";
 
     } else {
       $URL .= "alms/";
@@ -485,8 +492,8 @@ sub INDEGO_ReceiveCommand($$$) {
         # state
         if ( $service eq "state" or $service eq "longpollState") {
           if ( ref($return) eq "HASH" and !defined($cmd)) {
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "state",          INDEGO_BuildState($hash, $return->{state}));
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "state_id",       $return->{state});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "state",          INDEGO_BuildState($hash, $return->{state})) if (defined($return->{state}));
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "state_id",       $return->{state}) if (defined($return->{state}));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",          $return->{mowed}) if (defined($return->{mowed}));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",       FmtDateTime(int($return->{mowed_ts}/1000))) if (defined($return->{mowed_ts}));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts", FmtDateTime(int($return->{mapsvgcache_ts}/1000))) if (defined($return->{mapsvgcache_ts}));
@@ -757,14 +764,16 @@ sub INDEGO_ReceiveCommand($$$) {
 
         # map
         elsif ( $service eq "map" ) {
-          my $map = $return;
-          eval { require Compress::Zlib; };
-          unless($@) {
-            $map = Compress::Zlib::compress($map);
+          if ( defined($return) ) {
+            my $map = $return;
+            eval { require Compress::Zlib; };
+            unless($@) {
+              $map = Compress::Zlib::compress($map);
+            }
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, ".mapsvgcache", $map );
+  
+            readingsEndUpdate( $hash, 1 );
           }
-          INDEGO_ReadingsBulkUpdateIfChanged($hash, ".mapsvgcache", $map );
-
-          readingsEndUpdate( $hash, 1 );
         }
 
         # authenticate
@@ -828,6 +837,14 @@ sub INDEGO_ReceiveCommand($$$) {
         # setCalendar
         elsif ( $service eq "setCalendar" ) {
             INDEGO_SendCommand($hash, "calendar");
+        }
+
+        # smartMode
+        elsif ( $service eq "smartMode" ) {
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "fc_enabled", ($rc->{cmd} eq "on") ? 1 : 0)
+                if ($rc->{httpheader} =~ /HTTP\/1.\d 200/);
+
+            readingsEndUpdate( $hash, 1 );
         }
     }
 
