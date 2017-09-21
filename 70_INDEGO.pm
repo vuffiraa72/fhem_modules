@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.5
+# Version: 0.2.6
 #
 ##############################################################################
 
@@ -537,6 +537,8 @@ sub INDEGO_ReceiveCommand($$$) {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "service_counter",      $return->{service_counter});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "bareToolnumber",       $return->{bareToolnumber});
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "alm_firmware_version", $return->{alm_firmware_version});
+            INDEGO_ReadingsBulkUpdateIfChanged($hash, "model",                INDEGO_GetModel($hash, $return->{bareToolnumber}))
+                if (defined($return->{bareToolnumber}));
 
             readingsEndUpdate( $hash, 1 );
           }
@@ -764,7 +766,7 @@ sub INDEGO_ReceiveCommand($$$) {
 
         # map
         elsif ( $service eq "map" ) {
-          if ( defined($return) ) {
+          if ( defined($return) and !ref($return)) {
             my $map = $return;
             eval { require Compress::Zlib; };
             unless($@) {
@@ -926,6 +928,25 @@ sub INDEGO_GetDay($$) {
     return $days->{$day};
 }
 
+sub INDEGO_GetModel($$) {
+    my ($hash,$baretool) = @_;
+    my $models = {
+        "3600HA2300" => "1000",
+        "3600HA2301" => "1200",
+        "3600HA2302" => "1100",
+        "3600HA2303" => "13C",
+        "3600HA2304" => "10C",
+        "3600HB0100" => "350",
+        "3600HB0101" => "400"
+    };
+    
+    if (defined( $models->{$baretool})) {
+        return $models->{$baretool};
+    } else {
+        return $models;
+    }
+}
+
 sub INDEGO_BuildState($$) {
     my ($hash,$state) = @_;
     my $states = {
@@ -937,6 +958,7 @@ sub INDEGO_BuildState($$) {
          '261' => "Docked",
          '262' => "Docked - Loading map",
          '263' => "Docked - Saving map",
+         '512' => "Leaving dock",
          '513' => "Mowing",
          '514' => "Relocalising",
          '515' => "Loading map",
@@ -944,6 +966,8 @@ sub INDEGO_BuildState($$) {
          '517' => "Paused",
          '518' => "Border cut",
          '519' => "Idle in lawn",
+         '520' => "Learning lawn",
+         '768' => "Returning to dock",
          '769' => "Returning to dock",
          '770' => "Returning to dock",
          '771' => "Returning to dock - Battery low",
@@ -954,7 +978,8 @@ sub INDEGO_BuildState($$) {
          '776' => "Returning to dock - Relocalising",
         '1025' => "Diagnostic mode",
         '1026' => "End of live",
-       ' 1281' => "Software update"
+        '1281' => "Software update",
+        '1537' => "Low power mode"
     };
 
     if (defined( $states->{$state})) {
