@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.6
+# Version: 0.2.7
 #
 ##############################################################################
 
@@ -496,7 +496,7 @@ sub INDEGO_ReceiveCommand($$$) {
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "state_id",       $return->{state}) if (defined($return->{state}));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed",          $return->{mowed}) if (defined($return->{mowed}));
             INDEGO_ReadingsBulkUpdateIfChanged($hash, "mowed_ts",       FmtDateTime(int($return->{mowed_ts}/1000))) if (defined($return->{mowed_ts}));
-            INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts", FmtDateTime(int($return->{mapsvgcache_ts}/1000))) if (defined($return->{mapsvgcache_ts}));
+            #INDEGO_ReadingsBulkUpdateIfChanged($hash, "mapsvgcache_ts", FmtDateTime(int($return->{mapsvgcache_ts}/1000))) if (defined($return->{mapsvgcache_ts}));
             #INDEGO_ReadingsBulkUpdateIfChanged($hash, "map_update_available", $return->{map_update_available});
             if ( ref($return->{runtime}) eq "HASH" ) {
               my $runtime = $return->{runtime};
