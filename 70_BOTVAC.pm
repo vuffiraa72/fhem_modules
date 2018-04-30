@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.9
+# Version: 0.2.9.d7.1
 #
 ##############################################################################
 
@@ -55,9 +55,10 @@ sub BOTVAC_Initialize($) {
     $hash->{SetFn}   = "BOTVAC_Set";
     $hash->{DefFn}   = "BOTVAC_Define";
     $hash->{UndefFn} = "BOTVAC_Undefine";
-
-    $hash->{AttrList} = "disable:0,1 " . $readingFnAttributes;
-
+    $hash->{AttrFn}  = "BOTVAC_Attr";
+    $hash->{AttrList} = "disable:0,1 " .
+                        "Boundaries:textField-long " .
+                         $readingFnAttributes;
     return;
 }
 
@@ -115,13 +116,17 @@ sub BOTVAC_Set($@) {
     return "No Argument given" if ( !defined( $a[1] ) );
 
     my $usage = "Unknown argument " . $a[1] . ", choose one of";
-    if (ReadingsVal($name, "srv_houseCleaning", "basic-1") eq "basic-1") {
+    if (ReadingsVal($name, "srv_houseCleaning", "") eq "basic-1") {
       $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
+    }elsif (ReadingsVal($name, "srv_houseCleaning", "") eq "basic-3") {
+      $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );  
     } else {
       $usage .= " startCleaning:Normal,ExtraCare" if ( ReadingsVal($name, ".start", "0") );
     }
-    if (ReadingsVal($name, "srv_spotCleaning", "basic-1") eq "basic-1") {
+    if (ReadingsVal($name, "srv_spotCleaning", "") eq "basic-1") {
       $usage .= " startSpot:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
+    } elsif (ReadingsVal($name, "srv_spotCleaning", "") eq "basic-3") {
+      $usage .= " startSpot:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );  
     } else {
       $usage .= " startSpot:Normal,ExtraCare" if ( ReadingsVal($name, ".start", "0") );
     }
@@ -130,7 +135,9 @@ sub BOTVAC_Set($@) {
     $usage .= " pauseToBase:noArg"       if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
     $usage .= " resume:noArg"            if ( ReadingsVal($name, ".resume", "0") );
     $usage .= " sendToBase:noArg"        if ( ReadingsVal($name, ".goToBase", "0") );
-    $usage .= " reloadMaps:noArg schedule:on,off syncRobots:noArg";
+    $usage .= " dismissCurrentAlert:noArg"  if ( ReadingsVal($name, "alert", "") ne "");
+    $usage .= " findMe:noArg"            if (ReadingsVal($name, "srv_findMe", "") eq "basic-1");
+    $usage .= " statusRequest:noArg reloadMaps:noArg schedule:on,off syncRobots:noArg";
     
     my @robots;
     if (defined($hash->{helper}{ROBOTS})) {
@@ -144,23 +151,47 @@ sub BOTVAC_Set($@) {
       }
     }
 
+    if (ReadingsVal($name, "srv_maps", "") eq "advanced-1") {
+      my @Boundaries;
+      if (defined($hash->{helper}{BoundariesList})) {
+        @Boundaries = @{$hash->{helper}{BoundariesList}};
+        my @names;
+        for (my $i = 0; $i < @Boundaries; $i++) {
+          my $name = $Boundaries[$i]->{name};
+          push @names,$name if (!(grep { $_ eq $name } @names) and ($name ne ""));
+         }
+         my $BoundariesList  = @names ? join(",", @names) : "textField";
+         $usage .= " setBoundaries:".$BoundariesList;
+       }
+      else {
+        $usage .= " setBoundaries:textField";
+       }
+     }
+
     my $cmd = '';
     my $result;
 
 
     # start
     if ( $a[1] eq "startCleaning" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
+        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2]. " " . $a[3];
 
         return "No argument given" if ( !defined( $a[2] ) );
 
         my %params;
-        $params{"category"} = "2";
-        if (ReadingsVal($name, "srv_houseCleaning", "basic-1") eq "basic-1") {
-          $params{"mode"} = $a[2] eq "Eco" ? "1" : "2";
-          $params{"modifier"} = "1";
+        if (ReadingsVal($name, "srv_houseCleaning", "") eq "basic-1") {
+          $params{"category"} = 2;
+          $params{"mode"} = $a[2] eq "Eco" ? 1 : 2;
+          $params{"modifier"} = 1;
+        } elsif (ReadingsVal($name, "srv_houseCleaning", "") eq "minimal-2") {
+          $params{"category"} = 2;
+          $params{"navigationMode"} = $a[2] eq "Normal" ? 1 : 2;
+        } elsif (ReadingsVal($name, "srv_houseCleaning", "") eq "basic-3") {
+          $params{"category"} = $a[3] eq "Map" ? 4 : 2;
+          $params{"navigationMode"} = 1; #1 normal 2 extra care 3 deep
+          $params{"mode"} = $a[2] eq "Eco" ? 1 : 2;
         } else {
-          $params{"navigationMode"} = $a[2] eq "Normal" ? "1" : "2";
+          return "HouseCleaning Service Version \":".ReadingsVal($name, "srv_houseCleaning", "")."\" not supported"
         }
 
         BOTVAC_SendCommand( $hash, "messages", "startCleaning", \%params );
@@ -172,15 +203,25 @@ sub BOTVAC_Set($@) {
         return "No argument given" if ( !defined( $a[2] ) );
 
         my %params;
-        $params{"category"} = "3";
-        if (ReadingsVal($name, "srv_spotCleaning", "basic-1") eq "basic-1") {
-          $params{"mode"} = $a[2] eq "Eco" ? "1" : "2";
-          $params{"modifier"} = "1";
-          $params{"spotWidth"} = "200";
-          $params{"spotHeight"} = "200";
+        if (ReadingsVal($name, "srv_spotCleaning", "") eq "basic-1") {
+          $params{"category"} = 3;
+          $params{"mode"} = $a[2] eq "Eco" ? 1 : 2;
+          $params{"modifier"} = 1;
+          $params{"spotWidth"} = 200;
+          $params{"spotHeight"} = 200;
+        } elsif (ReadingsVal($name, "srv_spotCleaning", "") eq "micro-2") {
+          $params{"category"} = 3;
+          $params{"navigationMode"} = $a[2] eq "Normal" ? 1 : 2;
+        } elsif (ReadingsVal($name, "srv_spotCleaning", "") eq "minimal-2") {
+          $params{"category"} = 3;
+          $params{"modifier"} = 1;
+          $params{"navigationMode"} = $a[2] eq "Normal" ? 1 : 2;
+        } elsif (ReadingsVal($name, "srv_spotCleaning", "") eq "basic-3") {
+          $params{"category"} = 3;
+          $params{"spotWidth"} = 200;
+          $params{"spotHeight"} = 200;
         } else {
-          $params{"modifier"} = "1";
-          $params{"navigationMode"} = $a[2] eq "Normal" ? "1" : "2";
+          return "SpotCleaning Service Version \":".ReadingsVal($name, "srv_spotCleaning", "")."\" not supported"
         }
 
         BOTVAC_SendCommand( $hash, "messages", "startCleaning", \%params );
@@ -221,6 +262,20 @@ sub BOTVAC_Set($@) {
         BOTVAC_SendCommand( $hash, "messages", "sendToBase" );
     }
 
+    # dismissCurrentAlert
+    elsif ( $a[1] eq "dismissCurrentAlert" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+
+        BOTVAC_SendCommand( $hash, "messages", "dismissCurrentAlert" );
+    }
+
+    # findMe 
+    elsif ( $a[1] eq "findMe" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+
+        BOTVAC_SendCommand( $hash, "messages", "findMe" );
+    }
+
     # schedule
     elsif ( $a[1] eq "schedule" ) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
@@ -240,6 +295,11 @@ sub BOTVAC_Set($@) {
         Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
         BOTVAC_SendCommand( $hash, "dashboard" );
+    }
+    elsif ( $a[1] eq "statusRequest" ) {
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+
+        BOTVAC_SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
     }
 
     # setRobot
@@ -264,6 +324,31 @@ sub BOTVAC_Set($@) {
         BOTVAC_SendCommand( $hash, "maps" );
     }
 
+    elsif ( $a[1] eq "setBoundaries") {
+        my $setBoundaries = "";
+        if ($a[2] =~ /^\{.*\}/){
+          $setBoundaries = $a[2];
+        }
+        elsif (defined($hash->{helper}{BoundariesList})) {
+          my @names = split ",",$a[2];
+          my @Boundaries = @{$hash->{helper}{BoundariesList}};
+          for (my $i = 0; $i < @Boundaries; $i++) {
+            foreach my $name (@names) {
+              if ($Boundaries[$i]->{name} eq $name) {
+                $setBoundaries .= "," if ($setBoundaries =~ /^\{.*\}/);
+                $setBoundaries .= encode_json($Boundaries[$i]);
+              }
+            }
+          }
+        }
+        return "Argument of $a[1] is not a valid Boundarie name and also not a JSON string: \"$a[2]\"" if ($setBoundaries eq "");
+        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2] . " json: " . $setBoundaries;
+        my %params;
+        $params{"boundaries"} = "\[".$setBoundaries."\]";
+        $params{"mapId"} = "\"".ReadingsVal($name, "map_persistent_id", "myHome")."\"";
+        BOTVAC_SendCommand( $hash, "messages", "setMapBoundaries", \%params );
+        return;
+    }
     # return usage hint
     else {
         return $usage;
@@ -318,6 +403,39 @@ sub BOTVAC_Define($$) {
     BOTVAC_addExtension($name, "BOTVAC_GetMap", "BOTVAC/$name/map");
 
     return;
+}
+
+sub BOTVAC_Attr(@)
+{
+  my ($cmd,$name,$attr_name,$attr_value) = @_;
+  my $hash  = $defs{$name};
+  my $err;
+  if ($cmd eq "set")
+  {
+    if ($attr_name eq "Boundaries") {
+      if ($attr_value !~ /^\{.*\}/){
+        $err = "Invalid value $attr_value for attribute $attr_name. Must be a space separated list of JSON strings.";
+      }
+      else {
+        my @Boundaries = split " ",$attr_value;
+        my @areas;
+        if (@Boundaries > 1){
+          foreach my $area (@Boundaries) {
+            push @areas,eval{decode_json $area};
+          }
+        }
+        else {
+          push @areas,eval{decode_json $attr_value};
+        }
+      $hash->{helper}{BoundariesList} = \@areas;
+      }
+    }
+  }
+  else
+  {
+    delete $hash->{helper}{BoundariesList} if ($attr_name eq "Boundaries");
+  }
+ return $err ? $err : undef;
 }
 
 ############################################################################################################
@@ -424,8 +542,9 @@ sub BOTVAC_SendCommand($$;$$@) {
       if (defined($params) and ref($params) eq "HASH") {
         $data .= ",\"params\":{";
         foreach( keys %$params ) {
-          $data .= "\"$_\":\"$params->{$_}\""; 
+          $data .= "\"$_\":$params->{$_},"; 
         }
+        my $tmp = chop($data);  #remove last ","
         $data .= "}";
       }
       $data .= "}";
@@ -551,14 +670,48 @@ sub BOTVAC_ReceiveCommand($$$) {
               if (ref($scheduleData->{events}) eq "ARRAY") {
                 my @events = @{$scheduleData->{events}};
                 for (my $i = 0; $i < @events; $i++) {
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."mode",      $events[$i]->{mode})
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."mode",      BOTVAC_GetModeText($events[$i]->{mode}))
                       if (defined($events[$i]->{mode}));
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."day",       $events[$i]->{day});
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."day",       BOTVAC_GetDayText($events[$i]->{day}));
                   BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime});
                 }
               }
             }
-          } else {
+          } 
+          elsif ( $cmd eq "getMapBoundaries" ) {
+              if ( ref($return->{data}) eq "HASH" ) {
+                my $boundariesData = $return->{data};
+                if (ref($boundariesData->{boundaries}) eq "ARRAY") {
+                  my @boundaries = @{$boundariesData->{boundaries}};
+                  my $tmp = "";
+                  my $boundariesList = "";
+                  for (my $i = 0; $i < @boundaries; $i++) {
+                    $boundariesList .= "{\"type\":\"".$boundaries[$i]->{type}."\",";
+                    if (ref($boundaries[$i]->{vertices}) eq "ARRAY") {
+                      my @vertices = @{$boundaries[$i]->{vertices}};
+                      $boundariesList .= "\"vertices\":[";
+                      for (my $e = 0; $e < @vertices; $e++) {
+                        if (ref($vertices[$e]) eq "ARRAY") {
+                          my @xy = @{$vertices[$e]};
+                          $boundariesList .= "[".$xy[0].",".$xy[1]."],";
+                        }
+                      }
+                    $tmp = chop($boundariesList);  #remove last ","
+                    $boundariesList .= "],";
+                    }
+                    $boundariesList .= "\"name\":\"".$boundaries[$i]->{name}."\",";
+                    $boundariesList .= "\"color\":\"".$boundaries[$i]->{color}."\",";
+                    $tmp = $boundaries[$i]->{enabled} eq "1" ? "true" : "false";
+                    $boundariesList .= "\"enabled\":".$tmp.",";
+                    $tmp = chop($boundariesList);  #remove last ","
+                    $boundariesList .= "},";
+                  }
+                  $tmp = chop($boundariesList);  #remove last ","
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "boundaries", $boundariesList);
+                }
+              }
+          } 
+          else {
             # getRobotState, startCleaning, pauseCleaning, stopCleaning, resumeCleaning, sendToBase
             if ( ref($return) eq "HASH" ) {
               push(@successor , ["maps"])
@@ -566,17 +719,21 @@ sub BOTVAC_ReceiveCommand($$$) {
                       ($return->{state} == 1 or $return->{state} == 4) and   # Idle or Error
                       $return->{state} != ReadingsNum($name, "stateId", $return->{state}));
               
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "version", $return->{version});
-              BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "result", $return->{result});
-              BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "error", $return->{error});
-              #BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "data", $return->{data});
-              BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "stateId", $return->{state});
-              BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "action", $return->{action});
+              #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "version", $return->{version});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "result", $return->{result});
+              my $error = ($return->{error}) ? $return->{error} : "";
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "error", $error);
+              my $alert = ($return->{alert}) ? $return->{alert} : "";
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "alert", $alert);
+              #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "data", $return->{data});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "stateId", $return->{state});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "action", $return->{action});
               if ( ref($return->{cleaning}) eq "HASH" ) {
                 my $cleaning = $return->{cleaning};
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanCategorie",  $cleaning->{category});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanMode",       $cleaning->{mode});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanModifier",   $cleaning->{modifier});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanCategory",  BOTVAC_GetCategoryText($cleaning->{category}));
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanMode",       BOTVAC_GetModeText($cleaning->{mode}));
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanModifier",   BOTVAC_GetModifierText($cleaning->{modifier}));
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanNavigationMode",  BOTVAC_GetNavigationModeText($cleaning->{navigationMode}));
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanSpotWidth",  $cleaning->{spotWidth});
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleanSpotHeight", $cleaning->{spotHeight});
               }
@@ -654,11 +811,26 @@ sub BOTVAC_ReceiveCommand($$$) {
               my @maps = @{$return->{maps}};
               # take first - newest
               my $map = $maps[0];
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_id",   $map->{id});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date", $map->{generated_at});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_area", $map->{cleaned_area});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".map_url", $map->{url});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date",   $map->{generated_at});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
               $loadMap = 1;
+              # search newest persistent map
+              for (my $i = 0; $i < @maps; $i++) {
+                if ($maps[$i]->{valid_as_persistent_map} == true){
+                  Log3 $name, 5, "BOTVAC $name: found persistent mapId: $maps[$i]->{id}";
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_persistent_id", $maps[$i]->{id});
+                  # getMapBoundaries
+                  if (ReadingsVal($name, "srv_maps", "") eq "advanced-1") {
+                    my %params;
+                    $params{"mapId"} = "\"".$maps[$i]->{id}."\"";
+                    push(@successor , ["messages", "getMapBoundaries", \%params]);
+                  }
+                  last;
+                }
+              }
             }
           }
         }
@@ -679,7 +851,8 @@ sub BOTVAC_ReceiveCommand($$$) {
     
     if ($loadMap) {
       my $url = ReadingsVal($name, ".map_url", "");
-      BOTVAC_SendCommand($hash, "loadmap", $url) if ($url ne "");
+    #  BOTVAC_SendCommand($hash, "loadmap", $url) if ($url ne "");
+      push(@successor , ["loadmap", $url]) if ($url ne "");
     }
     
     if (@successor) {
@@ -799,7 +972,12 @@ sub BOTVAC_GetActionText($) {
         '7'       => "Updating",
         '8'       => "Copying Logs",
         '9'       => "Recovering Location",
-        '10'      => "IEC Test"
+        '10'      => "IEC Test",
+        '11'      => "Map cleaning",
+        '12'      => "Exploring map (creating a persistent map)",
+        '13'      => "Acquiring Persistent Map IDs",
+        '14'      => "Creating & Uploading Map",
+        '15'      => "Suspended Exploration"
     };
 
     if (defined( $actions->{$action})) {
@@ -828,6 +1006,84 @@ sub BOTVAC_GetErrorText($) {
         return $errors->{$error};
     } else {
         return $error;
+    }
+}
+
+sub BOTVAC_GetCategoryText($) {
+    my ($category) = @_;
+    my $categorys = {
+        '1'       => "manual",
+        '2'       => "house",
+        '3'       => "spot",
+        '4'       => "map"
+    };
+
+    if (defined( $categorys->{$category})) {
+        return $categorys->{$category};
+    } else {
+        return $category;
+    }
+}
+
+sub BOTVAC_GetModeText($) {
+    my ($mode) = @_;
+    my $modes = {
+        '1'       => "eco",
+        '2'       => "turbo"
+    };
+
+    if (defined( $modes->{$mode})) {
+        return $modes->{$mode};
+    } else {
+        return $mode;
+    }
+}
+
+sub BOTVAC_GetModifierText($) {
+    my ($modifier) = @_;
+    my $modifiers = {
+        '1'       => "normal",
+        '2'       => "double"
+    };
+
+    if (defined( $modifiers->{$modifier})) {
+        return $modifiers->{$modifier};
+    } else {
+        return $modifier;
+    }
+}
+
+sub BOTVAC_GetNavigationModeText($) {
+    my ($navigationMode) = @_;
+    my $navigationModes = {
+        '1'       => "normal",
+        '2'       => "extra care",
+        '3'       => "deep"
+    };
+
+    if (defined( $navigationModes->{$navigationMode})) {
+        return $navigationModes->{$navigationMode};
+    } else {
+        return $navigationMode;
+    }
+}
+
+sub BOTVAC_GetDayText($) {
+    my ($day) = @_;
+    my $days = {
+        '0'       => "Sunday",
+        '1'       => "Monday",
+        '2'       => "Tuesday",
+        '3'       => "Wednesday",
+        '4'       => "Thursday",
+        '5'       => "Friday",
+        '6'       => "Saturda"
+    };
+
+    if (defined( $days->{$day})) {
+        return $days->{$day};
+    } else {
+        return $day;
     }
 }
 
