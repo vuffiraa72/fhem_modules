@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.9.d7.1
+# Version: 0.2.9.d7.2
 #
 ##############################################################################
 
@@ -115,6 +115,10 @@ sub BOTVAC_Set($@) {
 
     return "No Argument given" if ( !defined( $a[1] ) );
 
+    my $arg = $a[1];
+    $arg .= " ".$a[2] if (defined( $a[2] ));
+    $arg .= " ".$a[3] if (defined( $a[3] ));
+
     my $usage = "Unknown argument " . $a[1] . ", choose one of";
     if (ReadingsVal($name, "srv_houseCleaning", "") eq "basic-1") {
       $usage .= " startCleaning:Eco,Turbo" if ( ReadingsVal($name, ".start", "0") );
@@ -174,7 +178,7 @@ sub BOTVAC_Set($@) {
 
     # start
     if ( $a[1] eq "startCleaning" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2]. " " . $a[3];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -187,7 +191,7 @@ sub BOTVAC_Set($@) {
           $params{"category"} = 2;
           $params{"navigationMode"} = $a[2] eq "Normal" ? 1 : 2;
         } elsif (ReadingsVal($name, "srv_houseCleaning", "") eq "basic-3") {
-          $params{"category"} = $a[3] eq "Map" ? 4 : 2;
+          $params{"category"} = (defined($a[3]) and $a[3] eq "Map") ? 4 : 2;
           $params{"navigationMode"} = 1; #1 normal 2 extra care 3 deep
           $params{"mode"} = $a[2] eq "Eco" ? 1 : 2;
         } else {
@@ -198,7 +202,7 @@ sub BOTVAC_Set($@) {
     }
 
     elsif ( $a[1] eq "startSpot" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -229,56 +233,56 @@ sub BOTVAC_Set($@) {
 
     # stop
     elsif ( $a[1] eq "stop" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
     }
 
     # pause
     elsif ( $a[1] eq "pause" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "pauseCleaning" );
     }
 
     # pauseToBase
     elsif ( $a[1] eq "pauseToBase" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "pauseCleaning", undef, (["messages", "sendToBase"]) );
     }
 
     # resume
     elsif ( $a[1] eq "resume" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "resumeCleaning" );
     }
 
     # sendToBase
     elsif ( $a[1] eq "sendToBase" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "sendToBase" );
     }
 
     # dismissCurrentAlert
     elsif ( $a[1] eq "dismissCurrentAlert" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "dismissCurrentAlert" );
     }
 
     # findMe 
     elsif ( $a[1] eq "findMe" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "findMe" );
     }
 
     # schedule
     elsif ( $a[1] eq "schedule" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -292,19 +296,19 @@ sub BOTVAC_Set($@) {
 
     # syncRobots
     elsif ( $a[1] eq "syncRobots" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "dashboard" );
     }
     elsif ( $a[1] eq "statusRequest" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         BOTVAC_SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
     }
 
     # setRobot
     elsif ( $a[1] eq "setRobot" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2];
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -319,12 +323,16 @@ sub BOTVAC_Set($@) {
     
     # reloadMaps
     elsif ( $a[1] eq "reloadMaps" ) {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
-      
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
+
         BOTVAC_SendCommand( $hash, "maps" );
     }
 
     elsif ( $a[1] eq "setBoundaries") {
+        Log3 $name, 2, "BOTVAC set $name " . $arg;
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
         my $setBoundaries = "";
         if ($a[2] =~ /^\{.*\}/){
           $setBoundaries = $a[2];
@@ -342,7 +350,7 @@ sub BOTVAC_Set($@) {
           }
         }
         return "Argument of $a[1] is not a valid Boundarie name and also not a JSON string: \"$a[2]\"" if ($setBoundaries eq "");
-        Log3 $name, 2, "BOTVAC set $name " . $a[1] . " " . $a[2] . " json: " . $setBoundaries;
+        Log3 $name, 5, "BOTVAC set $name " . $a[1] . " " . $a[2] . " json: " . $setBoundaries;
         my %params;
         $params{"boundaries"} = "\[".$setBoundaries."\]";
         $params{"mapId"} = "\"".ReadingsVal($name, "map_persistent_id", "myHome")."\"";
@@ -813,7 +821,7 @@ sub BOTVAC_ReceiveCommand($$$) {
               my $map = $maps[0];
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date",   $map->{generated_at});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date",   FmtDateTime(str2time($map->{generated_at})));
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
               $loadMap = 1;
