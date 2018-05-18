@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.0
+# Version: 0.4.1
 #
 ##############################################################################
 
@@ -384,7 +384,7 @@ sub BOTVAC_Define($$) {
     $hash->{INTERVAL} = $interval;
 
     unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
-        $attr{$name}{webCmd} = 'startCleaning Eco:stop:sendToBase';
+        $attr{$name}{webCmd} = 'startCleaning:stop:sendToBase';
     }
 
     # start the status update timer
@@ -939,7 +939,8 @@ sub BOTVAC_GetTimeFromString($) {
   eval {
     use Time::Local;
     if(defined($timeStr) and $timeStr =~ m/^(\d{4})-(\d{2})-(\d{2})T([0-2]\d):([0-5]\d):([0-5]\d)Z$/) {
-        return FmtDateTime(timelocal($6, $5, $4, $3, $2 - 1, $1 - 1900));
+        my $time = timelocal($6, $5, $4, $3, $2 - 1, $1 - 1900);
+        return FmtDateTime($time + fhemTzOffset($time));
     }
   }
 }
@@ -987,6 +988,12 @@ sub BOTVAC_SetServices {
     my $houseCleaningSrv = BOTVAC_GetServiceVersion($hash, "houseCleaning");
     my $spotCleaningSrv = BOTVAC_GetServiceVersion($hash, "spotCleaning");
     my @attributes;
+
+    # module attributes
+    push(@attributes, "disable:0,1");
+    push(@attributes, "actionInterval");
+    push(@attributes, "boundaries:textField-long");
+    push(@attributes, $readingFnAttributes);
 
     # house cleaning
     push(@attributes, "cleaningMode:eco,turbo") if ($houseCleaningSrv =~ /basic-\d/);
