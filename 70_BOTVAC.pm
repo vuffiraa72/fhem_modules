@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.1
+# Version: 0.4.2
 #
 ##############################################################################
 
