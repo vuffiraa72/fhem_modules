@@ -430,32 +430,27 @@ sub BOTVAC_Attr(@)
   my ($cmd,$name,$attr_name,$attr_value) = @_;
   my $hash  = $defs{$name};
   my $err;
-  if ($cmd eq "set")
-  {
-    if ($attr_name eq "Boundaries") {
+  if ($cmd eq "set") {
+    if ($attr_name eq "boundaries") {
       if ($attr_value !~ /^\{.*\}/){
         $err = "Invalid value $attr_value for attribute $attr_name. Must be a space separated list of JSON strings.";
-      }
-      else {
-        my @Boundaries = split " ",$attr_value;
+      } else {
+        my @boundaries = split " ",$attr_value;
         my @areas;
-        if (@Boundaries > 1){
-          foreach my $area (@Boundaries) {
+        if (@boundaries > 1) {
+          foreach my $area (@boundaries) {
             push @areas,eval{decode_json $area};
           }
-        }
-        else {
+        } else {
           push @areas,eval{decode_json $attr_value};
         }
       $hash->{helper}{BoundariesList} = \@areas;
       }
     }
+  } else {
+    delete $hash->{helper}{BoundariesList} if ($attr_name eq "boundaries");
   }
-  else
-  {
-    delete $hash->{helper}{BoundariesList} if ($attr_name eq "Boundaries");
-  }
- return $err ? $err : undef;
+  return $err ? $err : undef;
 }
 
 ############################################################################################################
