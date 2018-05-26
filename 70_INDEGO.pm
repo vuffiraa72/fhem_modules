@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.7
+# Version: 0.2.8
 #
 ##############################################################################
 
@@ -54,7 +54,9 @@ sub INDEGO_Initialize($) {
     $hash->{DefFn}   = "INDEGO_Define";
     $hash->{UndefFn} = "INDEGO_Undefine";
 
-    $hash->{AttrList} = "disable:0,1 " . $readingFnAttributes;
+    $hash->{AttrList} = "disable:0,1 " .
+                        "actionInterval " .
+                        $readingFnAttributes;
 
     return;
 }
@@ -66,6 +68,9 @@ sub INDEGO_GetStatus($;$) {
     my $interval = $hash->{INTERVAL};
 
     Log3 $name, 5, "INDEGO $name: called function INDEGO_GetStatus()";
+
+    # use actionInterval if state is busy, paused, or returning
+    $interval = AttrVal($name, "actionInterval", $interval) if (ReadingsVal($name, "stateId", "0") =~ /^[57]\d\d$/);
 
     RemoveInternalTimer($hash);
     InternalTimer( gettimeofday() + $interval, "INDEGO_GetStatus", $hash, 0 );
@@ -121,7 +126,7 @@ sub INDEGO_Set($@) {
     return "No Argument given" if ( !defined( $a[1] ) );
 
     my $usage = "Unknown argument " . $a[1];
-    $usage .= ", choose one of renewContext:noArg mow:noArg pause:noArg returnToDock:noArg reloadMap:noArg smartMode:on,off";
+    $usage .= ", choose one of password renewContext:noArg mow:noArg pause:noArg returnToDock:noArg reloadMap:noArg smartMode:on,off";
     $usage .= " deleteAlert:noArg" if (ReadingsVal($name, "alert_id", "-") ne "-");
     $usage .= " calendar:0,1,2,3,4,5";
 
@@ -188,6 +193,15 @@ sub INDEGO_Set($@) {
         INDEGO_SendCommand( $hash, "smartMode", $a[2] );
     }
 
+    # password
+    elsif ( $a[1] eq "password") {
+        Log3 $name, 2, "INDEGO set $name " . $a[1];
+
+        return "No password given" if ( !defined( $a[2] ) );
+
+        INDEGO_StorePassword( $hash, $a[2] );
+    }
+
     # return usage hint
     else {
         return $usage;
@@ -204,9 +218,9 @@ sub INDEGO_Define($$) {
 
     Log3 $name, 5, "INDEGO $name: called function INDEGO_Define()";
 
-    if ( int(@a) < 4 ) {
+    if ( int(@a) < 3 ) {
         my $msg =
-          "Wrong syntax: define <name> INDEGO <email> <password> [<poll-interval>]";
+          "Wrong syntax: define <name> INDEGO <email> [<poll-interval>]";
         Log3 $name, 4, $msg;
         return $msg;
     }
@@ -216,11 +230,17 @@ sub INDEGO_Define($$) {
     my $email = $a[2];
     $hash->{helper}{EMAIL} = $email;
 
-    my $password = $a[3];
-    $hash->{helper}{PASSWORD} = $password;
-    
     # use interval of 300 sec if not defined
-    my $interval = $a[4] || 300;
+    my $interval = 300;
+
+    if (defined($a[3])) {
+      if ($a[3] =~ /^[0-9]+$/ and not defined($a[4])) {
+        $interval = $a[3];
+      } else {
+        INDEGO_StorePassword($hash, $a[3]);
+        $interval = $a[4] if (defined($a[4]));
+      }
+    }
     $hash->{INTERVAL} = $interval;
 
     unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
@@ -286,7 +306,7 @@ sub INDEGO_SendCommand($$;$) {
     my ( $hash, $service, $type ) = @_;
     my $name        = $hash->{NAME};
     my $email       = $hash->{helper}{EMAIL};
-    my $password    = $hash->{helper}{PASSWORD};
+    my $password    = INDEGO_ReadPassword($hash);
     my $timestamp   = gettimeofday();
     my $timeout     = 30;
     my $header;
@@ -1059,6 +1079,63 @@ sub INDEGO_BuildCalendar($$) {
       "cals"    => \@cals
     );
     return encode_json(\%calendar);
+}
+
+sub INDEGO_StorePassword($$) {
+    my ($hash, $password) = @_;
+    my $index = $hash->{TYPE}."_".$hash->{NAME}."_passwd";
+    my $key = getUniqueId().$index;
+    my $enc_pwd = "";
+
+    if(eval "use Digest::MD5;1") {
+      $key = Digest::MD5::md5_hex(unpack "H*", $key);
+      $key .= Digest::MD5::md5_hex($key);
+    }
+    
+    for my $char (split //, $password) {
+      my $encode=chop($key);
+      $enc_pwd.=sprintf("%.2x",ord($char)^ord($encode));
+      $key=$encode.$key;
+    }
+    
+    my $err = setKeyValue($index, $enc_pwd);
+    return "error while saving the password - $err" if(defined($err));
+
+    return "password successfully saved";
+}
+
+sub INDEGO_ReadPassword($) {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+    my $index = $hash->{TYPE}."_".$hash->{NAME}."_passwd";
+    my $key = getUniqueId().$index;
+    my ($password, $err);
+    
+    Log3 $name, 4, "INDEGO $name: Read password from file";
+    
+    ($err, $password) = getKeyValue($index);
+
+    if ( defined($err) ) {
+      Log3 $name, 3, "INDEGO $name: unable to read password from file: $err";
+      return undef; 
+    }
+    
+    if ( defined($password) ) {
+      if ( eval "use Digest::MD5;1" ) {
+        $key = Digest::MD5::md5_hex(unpack "H*", $key);
+        $key .= Digest::MD5::md5_hex($key);
+      }
+      my $dec_pwd = '';
+      for my $char (map { pack('C', hex($_)) } ($password =~ /(..)/g)) {
+        my $decode=chop($key);
+        $dec_pwd.=chr(ord($char)^ord($decode));
+        $key=$decode.$key;
+      }
+      return $dec_pwd;
+    } else {
+      Log3 $name, 3, "INDEGO $name: No password in file";
+      return undef;
+    }
 }
 
 sub INDEGO_ShowMap($;$$) {
