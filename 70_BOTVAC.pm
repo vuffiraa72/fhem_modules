@@ -58,8 +58,13 @@ sub BOTVAC_Initialize($) {
     $hash->{DeleteFn} = "BOTVAC_Delete";
     $hash->{AttrFn}   = "BOTVAC_Attr";
     $hash->{AttrList} = "disable:0,1 " .
-    					          "actionInterval " .
+                        "actionInterval " .
                         "boundaries:textField-long " .
+                        "cleaningMode " .
+                        "cleaningNavigationMode " .
+                        "cleaningModifier " .
+                        "cleaningSpotWidth " .
+                        "cleaningSpotHeight " .
                          $readingFnAttributes;
     return;
 }
@@ -606,6 +611,15 @@ sub BOTVAC_SendCommand($$;$$@) {
           $data .= BOTVAC_GetCleaningParameter($hash, "cleaningSpotHeight", "200");
         }          
         $data .= "}";
+      } elsif ($cmd eq "setMapBoundaries") {   
+        if (defined($option) and ref($option) eq "HASH") {
+          $data .= ",\"params\":{";
+          foreach( keys %$option ) {
+            $data .= "\"$_\":$option->{$_},"; 
+          }
+          my $tmp = chop($data);  #remove last ","
+          $data .= "}";
+        }
       }
       
       $data .= "}";
@@ -877,13 +891,14 @@ sub BOTVAC_ReceiveCommand($$$) {
               $loadMap = 1;
               # search newest persistent map
               for (my $i = 0; $i < @maps; $i++) {
-                if ($maps[$i]->{valid_as_persistent_map}){
-                  Log3 $name, 5, "BOTVAC $name: found persistent mapId: $maps[$i]->{id}";
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_persistent_id", $maps[$i]->{id});
+                if (($maps[$i]->{valid_as_persistent_map}) or ($maps[$i]->{cleaned_with_persistent_map_id} ne "null")){
+                  my $map_persistent_id = ($maps[$i]->{valid_as_persistent_map}) ? $maps[$i]->{id} : $maps[$i]->{cleaned_with_persistent_map_id};
+                  Log3 $name, 5, "BOTVAC $name: found persistent mapId: $map_persistent_id";
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_persistent_id", $map_persistent_id);
                   # getMapBoundaries
                   if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1") {
                     my %params;
-                    $params{"mapId"} = "\"".$maps[$i]->{id}."\"";
+                    $params{"mapId"} = "\"".$map_persistent_id."\"";
                     push(@successor , ["messages", "getMapBoundaries", \%params]);
                   }
                   last;
