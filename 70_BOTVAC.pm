@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.2
+# Version: 0.4.3
 #
 ##############################################################################
 
@@ -188,7 +188,7 @@ sub BOTVAC_Set($@) {
     elsif ( $a[1] eq "startSpot" ) {
         Log3 $name, 2, "BOTVAC set $name $arg";
 
-        BOTVAC_SendCommand( $hash, "messages", "startCleaning" );
+        BOTVAC_SendCommand( $hash, "messages", "startSpot" );
     }
 
     # stop
@@ -261,7 +261,7 @@ sub BOTVAC_Set($@) {
         BOTVAC_SendCommand( $hash, "dashboard" );
     }
 
-	# statusRequest
+    # statusRequest
     elsif ( $a[1] eq "statusRequest" ) {
         Log3 $name, 2, "BOTVAC set $name $arg";
 
@@ -290,7 +290,7 @@ sub BOTVAC_Set($@) {
         BOTVAC_SendCommand( $hash, "maps" );
     }
 
-	# setBoundaries
+    # setBoundaries
     elsif ( $a[1] eq "setBoundaries") {
          Log3 $name, 2, "BOTVAC set $name $arg";
 
@@ -323,7 +323,7 @@ sub BOTVAC_Set($@) {
     
     # password
     elsif ( $a[1] eq "password") {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3 $name, 2, "BOTVAC set $name " . $a[1];
 
         return "No password given" if ( !defined( $a[2] ) );
 
@@ -773,12 +773,14 @@ sub BOTVAC_ReceiveCommand($$$) {
               }
           } 
           else {
-            # getRobotState, startCleaning, pauseCleaning, stopCleaning, resumeCleaning, sendToBase
+            # getRobotState, startCleaning, pauseCleaning, stopCleaning, resumeCleaning,
+            # sendToBase, setMapBoundaries
             if ( ref($return) eq "HASH" ) {
               push(@successor , ["maps"])
-                  if (defined($return->{state}) and
-                      ($return->{state} == 1 or $return->{state} == 4) and   # Idle or Error
-                      $return->{state} != ReadingsNum($name, "stateId", $return->{state}));
+                  if ($cmd eq "setMapBoundaries" or 
+                      (defined($return->{state}) and
+                       ($return->{state} == 1 or $return->{state} == 4) and   # Idle or Error
+                       $return->{state} != ReadingsNum($name, "stateId", $return->{state})));
               
               #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "version", $return->{version});
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "result", $return->{result});
