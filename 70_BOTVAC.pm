@@ -589,6 +589,7 @@ sub BOTVAC_SendCommand($$;$$@) {
         }          
         $data .= "}";
       } elsif ($cmd eq "startSpot") {
+        $data = "{\"reqId\":\"1\",\"cmd\":\"startCleaning\"";
         $data .= ",\"params\":{";
         $data .= "\"category\":3";
         my $version = BOTVAC_GetServiceVersion($hash, "spotCleaning");
@@ -797,14 +798,15 @@ sub BOTVAC_ReceiveCommand($$$) {
                        $return->{state} != ReadingsNum($name, "stateId", $return->{state})));
               
               #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "version", $return->{version});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "result", $return->{result});
-              my $error = ($return->{error}) ? $return->{error} : "";
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "error", $error);
-              my $alert = ($return->{alert}) ? $return->{alert} : "";
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "alert", $alert);
               #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "data", $return->{data});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "stateId", $return->{state});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "action", $return->{action});
+              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "result", $return->{result});
+
+
+
+
+
+
+
               if ( ref($return->{cleaning}) eq "HASH" ) {
                 my $cleaning = $return->{cleaning};
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningCategory",       BOTVAC_GetCategoryText($cleaning->{category}));
@@ -838,10 +840,18 @@ sub BOTVAC_ReceiveCommand($$$) {
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "model",    $meta->{modelName});
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "firmware", $meta->{firmware});
               }
-              BOTVAC_ReadingsBulkUpdateIfChanged(
+              if (defined($return->{state})){ #State Response
+                my $error = ($return->{error}) ? $return->{error} : "";
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "error", $error);
+                my $alert = ($return->{alert}) ? $return->{alert} : "";
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "alert", $alert);
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "stateId", $return->{state});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "action", $return->{action});
+                BOTVAC_ReadingsBulkUpdateIfChanged(
                   $hash,
                   "state",
                   BOTVAC_BuildState($hash, $return->{state}, $return->{action}, $return->{error}));
+              }
             }
           }
         }
