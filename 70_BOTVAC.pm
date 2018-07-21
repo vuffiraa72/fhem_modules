@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.3
+# Version: 0.4.4
 #
 ##############################################################################
 
@@ -105,14 +105,14 @@ sub BOTVAC_Get($@) {
 
     $what = $a[1];
 
-    if ( $what =~ /^(charge)$/ ) {
+    if ( $what =~ /^(batteryPercent)$/ ) {
         if ( defined( $hash->{READINGS}{$what}{VAL} ) ) {
             return $hash->{READINGS}{$what}{VAL};
         } else {
             return "no such reading: $what";
         }
     } else {
-        return "Unknown argument $what, choose one of charge:noArg";
+        return "Unknown argument $what, choose one of batteryPercent:noArg";
     }
 }
 
@@ -625,7 +625,8 @@ sub BOTVAC_SendCommand($$;$$@) {
       
       $data .= "}";
 
-      my $date = gmtime();
+      my $now = time();
+      my $date = FmtDateTimeRFC1123($now);
       my $message = join("\n", (lc($serial), $date, $data));
       my $hmac = hmac_sha256_hex($message, ReadingsVal($name, "secretKey", ""));
 
@@ -801,12 +802,6 @@ sub BOTVAC_ReceiveCommand($$$) {
               #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "data", $return->{data});
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "result", $return->{result});
 
-
-
-
-
-
-
               if ( ref($return->{cleaning}) eq "HASH" ) {
                 my $cleaning = $return->{cleaning};
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningCategory",       BOTVAC_GetCategoryText($cleaning->{category}));
@@ -822,7 +817,7 @@ sub BOTVAC_ReceiveCommand($$$) {
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "isDocked",          $details->{isDocked});
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "isScheduleEnabled", $details->{isScheduleEnabled});
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "dockHasBeenSeen",   $details->{dockHasBeenSeen});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "charge",            $details->{charge});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "batteryPercent",    $details->{charge});
               }
               if ( ref($return->{availableCommands}) eq "HASH" ) {
                 my $availableCommands = $return->{availableCommands};
