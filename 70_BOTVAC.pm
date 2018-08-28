@@ -159,7 +159,7 @@ sub BOTVAC_Set($@) {
       }
     }
 
-    if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1") {
+    if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1" or BOTVAC_GetServiceVersion($hash, "maps") eq "macro-1") {
       my @Boundaries;
       if (defined($hash->{helper}{BoundariesList})) {
         @Boundaries = @{$hash->{helper}{BoundariesList}};
@@ -898,12 +898,12 @@ sub BOTVAC_ReceiveCommand($$$) {
               $loadMap = 1;
               # search newest persistent map
               for (my $i = 0; $i < @maps; $i++) {
-                if (($maps[$i]->{valid_as_persistent_map}) or ($maps[$i]->{cleaned_with_persistent_map_id} ne "null")){
+                if ($maps[$i]->{valid_as_persistent_map} or defined($maps[$i]->{cleaned_with_persistent_map_id})){
                   my $map_persistent_id = ($maps[$i]->{valid_as_persistent_map}) ? $maps[$i]->{id} : $maps[$i]->{cleaned_with_persistent_map_id};
                   Log3 $name, 5, "BOTVAC $name: found persistent mapId: $map_persistent_id";
                   BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_persistent_id", $map_persistent_id);
                   # getMapBoundaries
-                  if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1") {
+                  if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1" or BOTVAC_GetServiceVersion($hash, "maps") eq "macro-1") {
                     my %params;
                     $params{"mapId"} = "\"".$map_persistent_id."\"";
                     push(@successor , ["messages", "getMapBoundaries", \%params]);
