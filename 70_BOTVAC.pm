@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.4
+# Version: 0.4.5
 #
 ##############################################################################
 
@@ -60,11 +60,6 @@ sub BOTVAC_Initialize($) {
     $hash->{AttrList} = "disable:0,1 " .
                         "actionInterval " .
                         "boundaries:textField-long " .
-                        "cleaningMode " .
-                        "cleaningNavigationMode " .
-                        "cleaningModifier " .
-                        "cleaningSpotWidth " .
-                        "cleaningSpotHeight " .
                          $readingFnAttributes;
     return;
 }
@@ -147,6 +142,19 @@ sub BOTVAC_Set($@) {
     $usage .= " findMe:noArg"            if ( BOTVAC_GetServiceVersion($hash, "findMe") eq "basic-1" );
     $usage .= " statusRequest:noArg schedule:on,off syncRobots:noArg";
     
+    my $houseCleaningSrv = BOTVAC_GetServiceVersion($hash, "houseCleaning");
+    my $spotCleaningSrv = BOTVAC_GetServiceVersion($hash, "spotCleaning");
+    # house cleaning
+    $usage .= " nextCleaningMode:eco,turbo" if ($houseCleaningSrv =~ /basic-\d/);
+    $usage .= " nextCleaningNavigationMode:normal,extra#care" if ($houseCleaningSrv eq "minimal-2");
+    $usage .= " nextCleaningNavigationMode:normal,extra#care,deep" if ($houseCleaningSrv eq "basic-3");
+    #spot cleaning
+    $usage .= " nextCleaningModifier:normal,double" if ($spotCleaningSrv eq "basic-1" or $spotCleaningSrv eq "minimal-2");
+    if ($spotCleaningSrv =~ /basic-\d/) {
+      $usage .= " nextCleaningSpotWidth:100,200,300,400";
+      $usage .= " nextCleaningSpotHeight:100,200,300,400";
+    }
+
     my @robots;
     if (defined($hash->{helper}{ROBOTS})) {
       @robots = @{$hash->{helper}{ROBOTS}};
@@ -492,7 +500,7 @@ sub BOTVAC_SendCommand($$;$$@) {
     my $email       = $hash->{EMAIL};
     my $password    = BOTVAC_ReadPassword($hash);
     my $timestamp   = gettimeofday();
-    my $timeout     = 42;
+    my $timeout     = 180;
     my $header;
     my $data;
 
@@ -553,7 +561,7 @@ sub BOTVAC_SendCommand($$;$$@) {
       my $serial = ReadingsVal($name, "serial", "");
       return if ($serial eq "");
 
-      $URL .= BOTVAC_GetNucleoHost($hash->{VENDOR});
+      $URL = ReadingsVal($name, "nucleoUrl", "https://".BOTVAC_GetNucleoHost($hash->{VENDOR}));
       $URL .= "/vendors/";
       $URL .= $hash->{VENDOR};
       $URL .= "/robots/$serial/messages";
@@ -869,7 +877,8 @@ sub BOTVAC_ReceiveCommand($$$) {
                   "name"      => $robots[$i]->{name},
                   "serial"    => $robots[$i]->{serial},
                   "secretKey" => $robots[$i]->{secret_key},
-                  "macAddr"   => $robots[$i]->{mac_address}
+                  "macAddr"   => $robots[$i]->{mac_address},
+                  "nucleoUrl" => $robots[$i]->{nucleo_url}
                 };
                 push(@robotList, $r);
               }
@@ -973,6 +982,7 @@ sub BOTVAC_SetRobot($$) {
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "name",      $robots[$robot]->{name});
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "secretKey", $robots[$robot]->{secretKey});
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "macAddr",   $robots[$robot]->{macAddr});
+    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "nucleoUrl", $robots[$robot]->{nucleoUrl});
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "robot",     $robot);
 }
 
@@ -980,7 +990,8 @@ sub BOTVAC_GetCleaningParameter($$$) {
   my ($hash, $param, $default) = @_;
   my $name = $hash->{NAME};
 
-  return AttrVal($name, $param, ReadingsVal($name, $param, $default));
+  my $nextReading = "next".ucfirst($param);
+  return ReadingsVal($name, $nextReading, ReadingsVal($name, $param, $default));
 }
 
 sub BOTVAC_GetServiceVersion($$) {
@@ -999,35 +1010,7 @@ sub BOTVAC_SetServices {
   my $name = $hash->{NAME};
   my $serviceList = join(", ", map { "$_:$services->{$_}" } keys %$services);;
 
-  if (!defined($hash->{SERVICES}) or $hash->{SERVICES} ne $serviceList) {
-    $hash->{SERVICES} = $serviceList;
-
-    my $houseCleaningSrv = BOTVAC_GetServiceVersion($hash, "houseCleaning");
-    my $spotCleaningSrv = BOTVAC_GetServiceVersion($hash, "spotCleaning");
-    my @attributes;
-
-    # module attributes
-    push(@attributes, "disable:0,1");
-    push(@attributes, "actionInterval");
-    push(@attributes, "boundaries:textField-long");
-    push(@attributes, $readingFnAttributes);
-
-    # house cleaning
-    push(@attributes, "cleaningMode:eco,turbo") if ($houseCleaningSrv =~ /basic-\d/);
-    push(@attributes, "cleaningNavigationMode:normal,extra#care") if ($houseCleaningSrv eq "minimal-2");
-    push(@attributes, " cleaningNavigationMode:normal,extra#care,deep") if ($houseCleaningSrv eq "basic-3");
-
-    #spot cleaning
-    push(@attributes, " cleaningModifier:normal,double") if ($spotCleaningSrv eq "basic-1" or $spotCleaningSrv eq "minimal-2");
-    if ($spotCleaningSrv =~ /basic-\d/) {
-      push(@attributes, " cleaningSpotWidth:100,200,300,400");
-      push(@attributes, " cleaningSpotHeight:100,200,300,400");
-    }
-
-    my $attrList = join(" ", @attributes);
-    Log3 $name, 5, "BOTVAC $name: set device specific attribute list: $attrList";
-    setDevAttrList($name, $attrList);
-  }
+  $hash->{SERVICES} = $serviceList if (!defined($hash->{SERVICES}) or $hash->{SERVICES} ne $serviceList);
 }
 
 sub BOTVAC_StorePassword($$) {
