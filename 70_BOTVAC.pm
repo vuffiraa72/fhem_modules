@@ -57,6 +57,9 @@ sub BOTVAC_Initialize($) {
     $hash->{UndefFn}  = "BOTVAC_Undefine";
     $hash->{DeleteFn} = "BOTVAC_Delete";
     $hash->{AttrFn}   = "BOTVAC_Attr";
+    $hash->{ReadFn}   = "BOTVAC_wsRead";
+    $hash->{ReadyFn}  = "BOTVAC_wsReady";
+#    $hash->{WriteFn}  = "BOTVAC_wsWrite";
     $hash->{AttrList} = "disable:0,1 " .
                         "actionInterval " .
                         "boundaries:textField-long " .
@@ -826,6 +829,8 @@ sub BOTVAC_ReceiveCommand($$$) {
                   BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanSsid",      $data->{ssid});
                   BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanToken",     $data->{token});
                   BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanValidity",  BOTVAC_GetValidityEnd($data->{valid_for_seconds}));
+                  $hash->{DeviceName} = join(':', $data->{ip_address}, $data->{port});
+                  DevIo_OpenDev($hash, 0, "BOTVAC_wsHandshake", "BOTVAC_wsCallback");
                 } else {
                   BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanValidity",  "unavailable");
                 }
@@ -1334,6 +1339,99 @@ sub BOTVAC_GetMap() {
 
     return ("text/plain; charset=utf-8", "No BOTVAC device for webhook $request");
     
+}
+
+#######################################
+#       Websocket Functions
+#######################################
+sub BOTVAC_wsHandshake($) {
+    my $hash    = shift;
+    my $name    = $hash->{NAME};
+    my $host    = ReadingsVal($name, "wlanIpAddress", "");
+    my $path    = "/drive";
+    my $wsKey   = encode_base64(gettimeofday());
+    my $serial  = ReadingsVal($name, "serial", "");
+    my $now     = time();
+    my $date    = FmtDateTimeRFC1123($now);
+    my $message = join("\n", (lc($serial), $date));
+    my $hmac    = hmac_sha256_hex($message, ReadingsVal($name, "secretKey", ""));
+
+    
+    my $wsHandshakeCmd  = "";
+    $wsHandshakeCmd     .= "GET $path HTTP/1.1\r\n";
+    $wsHandshakeCmd     .= "Host: $host\r\n";
+    $wsHandshakeCmd     .= "Date: $date\r\n";
+    $wsHandshakeCmd     .= "Authorization: NEATOAPP $hmac\r\n";
+    $wsHandshakeCmd     .= "Upgrade: websocket\r\n";
+    $wsHandshakeCmd     .= "Connection: Upgrade\r\n";
+    $wsHandshakeCmd     .= "Sec-WebSocket-Key: $wsKey\r\n";
+    $wsHandshakeCmd     .= "Sec-WebSocket-Protocol: chat, superchat\r\n";           
+    $wsHandshakeCmd     .= "Sec-WebSocket-Version: 13\r\n";           
+    
+    Log3 $name, 4, "$hash->{TYPE} ($name) - Starting Websocket Handshake";
+    BOTVAC_wsWrite($hash,$wsHandshakeCmd);
+    
+    $hash->{HELPER}{wsKey}  = $wsKey;
+    
+#    Log3 $name, 4, "$hash->{TYPE} Websocket ($name) - start WS heartbeat timer";
+#    BOTVAC_HbTimer($hash);
+    return undef;
+}
+
+sub BOTVAC_wsWrite($@) {
+    my ($hash,$string)  = @_;
+    my $name = $hash->{NAME};
+    
+    Log3 $name, 4, "$hash->{TYPE} ($name) - WriteFn called:\n$string";
+    DevIo_SimpleWrite($hash, $string, 0);
+
+    return undef;
+}
+
+sub BOTVAC_wsRead($) {
+    my $hash = shift;
+    my $name = $hash->{NAME};
+    my $buf;
+
+    Log3 $name, 5, "$hash->{TYPE} ($name) - ReadFn started";
+    $buf = DevIo_SimpleRead($hash);
+    return Log3 $name, 3, "$hash->{TYPE} ($name) - no data received" 
+            unless( defined $buf);
+
+    if ($hash->{HELPER}{WESOCKETS}) {
+            # Fehlerhafte Botschaftsteile abschneiden?
+            #$buf =~ /(.{2,4}\[\{.*"glob_dev_id": .+\}\])/;
+            #$buf = $1;
+            #BOTVAC_wsDecode($hash,$buf);
+    } elsif( $buf =~ /HTTP\/1.1 101 Switching Protocols/ ) {
+        Log3 $name, 4, "$hash->{TYPE} ($name) - received HTTP data string, start response processing:\n$buf";
+                #BOTVAC_wsCheckHandshake($hash,$buf);
+    } else {
+        Log3 $name, 1, "$hash->{TYPE} ($name) - corrupted data found:\n$buf";
+    }
+}
+
+sub BOTVAC_wsCallback(@) {
+    my ($param, $err, $data) = @_;
+    my ($hash) = $param->{hash};
+       
+        if($err){
+        Log3($hash, 3, "$hash->{TYPE} ($hash->{NAME}) received callback with error:\n$err");
+        } elsif($data){
+                Log3($hash, 5, "$hash->{TYPE} ($hash->{NAME}) received callback with:\n$data");
+             my $parser = $param->{parser};
+        &$parser($hash, $data);
+                asyncOutput($hash->{HELPER}{CLCONF}, $data) if $hash->{HELPER}{CLCONF};
+                delete $hash->{HELPER}{CLCONF};
+        } else {
+        Log3($hash, 2, "$hash->{TYPE} ($hash->{NAME}) received callback without Data and Error String!!!");
+    }
+   return undef;
+}
+
+sub BOTVAC_wsReady($) {
+    my ($hash) = @_;
+    return DevIo_OpenDev($hash, 1, "BOTVAC_wsHandshake") if ( $hash->{wsState} eq "disconnected" );
 }
 
 #sub BOTVAC_GetCAKey($) {
