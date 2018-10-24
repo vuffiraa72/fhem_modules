@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 70_BOTVAC.pm 047 2018-10-24 21:25:09Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.6
+# Version: 0.4.7
 #
 ##############################################################################
 
@@ -340,6 +340,15 @@ sub BOTVAC_Set($@) {
         $params{"mapId"} = "\"".ReadingsVal($name, "map_persistent_id", "myHome")."\"";
         BOTVAC_SendCommand( $hash, "messages", "setMapBoundaries", \%params );
         return;
+    }
+
+    # nextCleaning
+    elsif ( $a[1] =~ /nextCleaning/) {
+        Log3 $name, 2, "BOTVAC set $name $arg";
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        readingsSingleUpdate($name, $a[1], $a[2], 0);
     }
     
     # password
