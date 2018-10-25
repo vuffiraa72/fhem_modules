@@ -1418,14 +1418,280 @@ sub BOTVAC_GetMap() {
 
 1;
 =pod
+=item summary 		Robot Vacuums
+=item summary_DE	Staubsauger Roboter
 =begin html
 
 <a name="BOTVAC"></a>
 <h3>BOTVAC</h3>
 <ul>
-  This module controls a Neato Botvac Connected.
+  This module controls Neato Botvac Connected and Vorwerk Robot Vacuums.
   <br><br>
+<a name="BOTVACDefine></a>
   <b>Define</b>
+	<ul>
+	<code>define &lt;name&gt; BOTVAC &lt;email&gt; [NEATO|VORWERK] [&lt;polling-interval&gt;]</code>
+	<br><br>
+	After defining the Device, it's necessary to enter the password with "set &lt;name&gt; password &lt;password&gt;
+	</ul>
+	 <br>
+
+  <a name="BOTVACget"></a>
+  <b>Get</b>
+  <ul>
+	<a name="batteryPercent"></a>
+	<li>
+	batteryPercent
+	<br>
+      	requests the state of the battery hopefully directly from Robot
+	</li>
+	<br>
+
+</ul><br>
+
+  <a name="BOTVACset"></a>
+  <b>Get</b>
+<ul>
+	<a name="findMe"></a>
+	<li>
+	findMe
+	<br>
+      plays a sound and let the LED light for easier finding of a stuck robot
+	</li>
+	<br>
+
+	<a name="dismissCurrentAlert"></a>
+	<li>
+	dismissCurrentAlert
+	<br>
+      	reset an actual Warning (e.g. dustbin full)
+	</li>
+	<br>
+
+	<a name="manualCleaningMode"></a>
+	<li>
+	manualCleaningMode
+	<br>
+      
+	</li>
+	<br>
+
+
+	<a name="nextCleaningMode"></a>
+	<li>
+	nextCleaningMode
+	<br>
+      
+	</li>
+	<br>
+
+
+	<a name="nextCleaningNavigationMode"></a>
+	<li>
+	nextCleaningNavigationMode
+	<br>
+      
+	</li>
+	<br>
+
+
+	<a name="nextCleaningSpotHeight"></a>
+	<li>
+	nextCleaningSpotHeight
+	<br>
+      
+	</li>
+	<br>
+
+
+	<a name="nextCleaningSpotWidth"></a>
+	<li>
+	nextCleaningSpotWidth
+	<br>
+      
+	</li>
+	<br>
+
+	<a name="password"></a>
+	<li>
+	password
+	<br>
+      	set the password for the NEATO/VORWERK account
+	</li>
+	<br>
+
+	<a name="pause"></a>
+	<li>
+	pause
+	<br>
+      	breaks the cleaning
+	</li>
+	<br>
+
+	<a name="pauseToBase"></a>
+	<li>
+	stops cleaning and returns to base
+	<br>
+      
+	</li>
+	<br>
+
+	<a name="reloadMaps"></a>
+	<li>
+	reloadMaps
+	<br>
+      	load last map from server into the cache of the module. no file is stored!
+	</li>
+	<br>
+
+	<a name="resume"></a>
+	<li>
+	resume cleaning after pause
+	<br>
+      
+	</li>
+	<br>
+
+	<a name="schedule"></a>
+	<li>
+	schedule
+	<br>
+      	on and off, switch time control
+	</li>
+	<br>
+
+	<a name="sendToBase"></a>
+	<li>
+	sendToBase
+	<br>
+      send roboter back to base
+	</li>
+	<br>
+
+	<a name="setBoundaries"></a>
+	<li>
+	setBoundaries
+	<br>
+      set boundaries/nogo lines
+	</li>
+	<br>
+
+	<a name="setRobot"></a>
+	<li>
+	setRobot
+	<br>
+      choose robot if more than one is registered at the used account
+	</li>
+	<br>
+
+	<a name="startCleaning"></a>
+	<li>
+	startCleaning
+	<br>
+      start the Cleaning from the scratch. Depending on Model, there are additional Arguments available: eco/turbo ; normal/extraCare
+	</li>
+	<br>
+
+
+	<a name="startSpot"></a>
+	<li>
+	startSpot
+	<br>
+            start spot-Cleaning from actual position. Depending on Model, there are additional Arguments available: eco/turbo ; normal/extraCare
+	</li>
+	<br>
+
+
+	<a name="statusRequest"></a>
+	<li>
+	statusRequest
+	<br>
+      pull update of all readings. necessary because NEATO/VORWERK does not send updates at their own.
+	</li>
+	<br>
+
+
+	<a name="stop"></a>
+	<li>
+	stop
+	<br>
+      stop cleaning
+	</li>
+	<br>
+
+
+	<a name="syncRobots"></a>
+	<li>
+	syncRobots
+	<br>
+      sync robot data with online account. Useful if one has more then one robot registered
+	</li>
+	<br>
+
+
+	<a name="stopCleaning"></a>
+	<li>
+	stopCleaning
+	<br>
+      stopCleaning and stay where you are
+	</li>
+	<br>
+
+
+	<a name=""></a>
+	<li>
+	
+	<br>
+      
+	</li>
+	<br>
+
+
+</ul><br>
+
+  <a name="BOTVACattr"></a>
+  <b>Attributes</b>
+  <ul>
+
+    <li><a href="#disable">disable</a><br>
+        <a href="#disabledForIntervals">disabledForIntervals</a><br>
+      disable distribution of messages. The server itself will accept and store
+      messages, but not forward them.
+      </li><br>
+	
+    <li><a href="#disable">actionInterval</a><br>
+        <a href="#disabledForIntervals">disabledForIntervals</a><br>
+      disable distribution of messages. The server itself will accept and store
+      messages, but not forward them.
+      </li><br>
+
+   <a name="actionInterval"></a>
+    <li>actionInterval<br>
+      time in seconds between status requests while Device is working
+      </li><br>
+
+	<a name="boundaries"></a>
+	<li>
+	boundaries
+	<br>
+      
+	</li>
+	<br>
+	<a name="oldreadings"></a>
+	<li>
+	oldreadings
+	<br>
+      
+	</li>
+	<br>
+  </ul>
+</ul>
+
+
+
+
+
+
 </ul>
 
 =end html
@@ -1434,7 +1700,7 @@ sub BOTVAC_GetMap() {
 <a name="BOTVAC"></a>
 <h3>BOTVAC</h3>
 <ul>
-  Diese Module dient zur Steuerung eines Neato Botvac Connected 
+  Dieses Module steuert Neato Botvac Connected und Vorwerk Staubsaugerroboter
   <br><br>
   <b>Define</b>
 </ul>
