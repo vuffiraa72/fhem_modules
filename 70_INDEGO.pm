@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.2.8
+# Version: 0.2.9
 #
 ##############################################################################
 
@@ -70,7 +70,7 @@ sub INDEGO_GetStatus($;$) {
     Log3 $name, 5, "INDEGO $name: called function INDEGO_GetStatus()";
 
     # use actionInterval if state is busy, paused, or returning
-    $interval = AttrVal($name, "actionInterval", $interval) if (ReadingsVal($name, "stateId", "0") =~ /^[57]\d\d$/);
+    $interval = AttrVal($name, "actionInterval", $interval) if (ReadingsVal($name, "state_id", "0") =~ /^[57]\d\d$/);
 
     RemoveInternalTimer($hash);
     InternalTimer( gettimeofday() + $interval, "INDEGO_GetStatus", $hash, 0 );
@@ -999,7 +999,8 @@ sub INDEGO_BuildState($$) {
         '1025' => "Diagnostic mode",
         '1026' => "End of live",
         '1281' => "Software update",
-        '1537' => "Low power mode"
+        '1537' => "Low power mode - Check PIN request on display",
+       '64513' => "Docked - Waking up"
     };
 
     if (defined( $states->{$state})) {
@@ -1162,7 +1163,7 @@ sub INDEGO_ShowMap($;$$) {
       $data = Compress::Zlib::uncompress($data) if ($compress);
     }
 
-    if (defined($data)) {
+    if (defined($data) and $data ne "") {
       if (!defined($height) and $data =~ /viewBox="0 0 (\d+) (\d+)"/) {
         my $factor = $1/$width;
         $height = int($2/$factor);

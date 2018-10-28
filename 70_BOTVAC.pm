@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 70_BOTVAC.pm 047 2018-10-24 21:25:09Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.4
+# Version: 0.4.7
 #
 ##############################################################################
 
@@ -60,11 +60,6 @@ sub BOTVAC_Initialize($) {
     $hash->{AttrList} = "disable:0,1 " .
                         "actionInterval " .
                         "boundaries:textField-long " .
-                        "cleaningMode " .
-                        "cleaningNavigationMode " .
-                        "cleaningModifier " .
-                        "cleaningSpotWidth " .
-                        "cleaningSpotHeight " .
                          $readingFnAttributes;
     return;
 }
@@ -137,16 +132,30 @@ sub BOTVAC_Set($@) {
       $usage .= (BOTVAC_GetServiceVersion($hash, "houseCleaning") eq "basic-3" ? "house,map" : "noArg");
       $usage .= " startSpot:noArg";
     }
-    $usage .= " stop:noArg"              if ( ReadingsVal($name, ".stop", "0") );
-    $usage .= " pause:noArg"             if ( ReadingsVal($name, ".pause", "0") );
-    $usage .= " pauseToBase:noArg"       if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
-    $usage .= " resume:noArg"            if ( ReadingsVal($name, ".resume", "0") );
-    $usage .= " sendToBase:noArg"        if ( ReadingsVal($name, ".goToBase", "0") );
-    $usage .= " reloadMaps:noArg"        if ( BOTVAC_GetServiceVersion($hash, "maps") ne "" );
+    $usage .= " stop:noArg"                if ( ReadingsVal($name, ".stop", "0") );
+    $usage .= " pause:noArg"               if ( ReadingsVal($name, ".pause", "0") );
+    $usage .= " pauseToBase:noArg"         if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
+    $usage .= " resume:noArg"              if ( ReadingsVal($name, ".resume", "0") );
+    $usage .= " sendToBase:noArg"          if ( ReadingsVal($name, ".goToBase", "0") );
+    $usage .= " reloadMaps:noArg"          if ( BOTVAC_GetServiceVersion($hash, "maps") ne "" );
     $usage .= " dismissCurrentAlert:noArg" if ( ReadingsVal($name, "alert", "") ne "" );
-    $usage .= " findMe:noArg"            if ( BOTVAC_GetServiceVersion($hash, "findMe") eq "basic-1" );
+    $usage .= " findMe:noArg"              if ( BOTVAC_GetServiceVersion($hash, "findMe") eq "basic-1" );
+    $usage .= " manualCleaningMode:noArg"  if ( BOTVAC_GetServiceVersion($hash, "manualCleaning") ne "" );
     $usage .= " statusRequest:noArg schedule:on,off syncRobots:noArg";
     
+    my $houseCleaningSrv = BOTVAC_GetServiceVersion($hash, "houseCleaning");
+    my $spotCleaningSrv = BOTVAC_GetServiceVersion($hash, "spotCleaning");
+    # house cleaning
+    $usage .= " nextCleaningMode:eco,turbo" if ($houseCleaningSrv =~ /basic-\d/);
+    $usage .= " nextCleaningNavigationMode:normal,extra#care" if ($houseCleaningSrv eq "minimal-2");
+    $usage .= " nextCleaningNavigationMode:normal,extra#care,deep" if ($houseCleaningSrv eq "basic-3");
+    #spot cleaning
+    $usage .= " nextCleaningModifier:normal,double" if ($spotCleaningSrv eq "basic-1" or $spotCleaningSrv eq "minimal-2");
+    if ($spotCleaningSrv =~ /basic-\d/) {
+      $usage .= " nextCleaningSpotWidth:100,200,300,400";
+      $usage .= " nextCleaningSpotHeight:100,200,300,400";
+    }
+
     my @robots;
     if (defined($hash->{helper}{ROBOTS})) {
       @robots = @{$hash->{helper}{ROBOTS}};
@@ -238,11 +247,18 @@ sub BOTVAC_Set($@) {
         BOTVAC_SendCommand( $hash, "messages", "dismissCurrentAlert" );
     }
 
-    # findMe 
+    # findMe
     elsif ( $a[1] eq "findMe" ) {
         Log3 $name, 2, "BOTVAC set $name $arg";
 
         BOTVAC_SendCommand( $hash, "messages", "findMe" );
+    }
+
+    # manualCleaningMode
+    elsif ( $a[1] eq "manualCleaningMode" ) {
+        Log3 $name, 2, "BOTVAC set $name $arg";
+
+        BOTVAC_SendCommand( $hash, "messages", "getRobotManualCleaningInfo" );
     }
 
     # schedule
@@ -324,6 +340,15 @@ sub BOTVAC_Set($@) {
         $params{"mapId"} = "\"".ReadingsVal($name, "map_persistent_id", "myHome")."\"";
         BOTVAC_SendCommand( $hash, "messages", "setMapBoundaries", \%params );
         return;
+    }
+
+    # nextCleaning
+    elsif ( $a[1] =~ /nextCleaning/) {
+        Log3 $name, 2, "BOTVAC set $name $arg";
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        readingsSingleUpdate($name, $a[1], $a[2], 0);
     }
     
     # password
@@ -492,7 +517,7 @@ sub BOTVAC_SendCommand($$;$$@) {
     my $email       = $hash->{EMAIL};
     my $password    = BOTVAC_ReadPassword($hash);
     my $timestamp   = gettimeofday();
-    my $timeout     = 42;
+    my $timeout     = 180;
     my $header;
     my $data;
 
@@ -553,7 +578,7 @@ sub BOTVAC_SendCommand($$;$$@) {
       my $serial = ReadingsVal($name, "serial", "");
       return if ($serial eq "");
 
-      $URL .= BOTVAC_GetNucleoHost($hash->{VENDOR});
+      $URL = ReadingsVal($name, "nucleoUrl", "https://".BOTVAC_GetNucleoHost($hash->{VENDOR}));
       $URL .= "/vendors/";
       $URL .= $hash->{VENDOR};
       $URL .= "/robots/$serial/messages";
@@ -790,7 +815,7 @@ sub BOTVAC_ReceiveCommand($$$) {
           } 
           else {
             # getRobotState, startCleaning, pauseCleaning, stopCleaning, resumeCleaning,
-            # sendToBase, setMapBoundaries
+            # sendToBase, setMapBoundaries, getRobotManualCleaningInfo
             if ( ref($return) eq "HASH" ) {
               push(@successor , ["maps"])
                   if ($cmd eq "setMapBoundaries" or 
@@ -802,6 +827,18 @@ sub BOTVAC_ReceiveCommand($$$) {
               #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "data", $return->{data});
               BOTVAC_ReadingsBulkUpdateIfChanged($hash, "result", $return->{result});
 
+              if ($cmd eq "getRobotManualCleaningInfo") {
+                if ( ref($return->{data}) eq "HASH") {
+                  my $data = $return->{data};
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanIpAddress", $data->{ip_address});
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanPort",      $data->{port});
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanSsid",      $data->{ssid});
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanToken",     $data->{token});
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanValidity",  BOTVAC_GetValidityEnd($data->{valid_for_seconds}));
+                } else {
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanValidity",  "unavailable");
+                }
+              }
               if ( ref($return->{cleaning}) eq "HASH" ) {
                 my $cleaning = $return->{cleaning};
                 BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningCategory",       BOTVAC_GetCategoryText($cleaning->{category}));
@@ -869,7 +906,8 @@ sub BOTVAC_ReceiveCommand($$$) {
                   "name"      => $robots[$i]->{name},
                   "serial"    => $robots[$i]->{serial},
                   "secretKey" => $robots[$i]->{secret_key},
-                  "macAddr"   => $robots[$i]->{mac_address}
+                  "macAddr"   => $robots[$i]->{mac_address},
+                  "nucleoUrl" => $robots[$i]->{nucleo_url}
                 };
                 push(@robotList, $r);
               }
@@ -973,6 +1011,7 @@ sub BOTVAC_SetRobot($$) {
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "name",      $robots[$robot]->{name});
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "secretKey", $robots[$robot]->{secretKey});
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "macAddr",   $robots[$robot]->{macAddr});
+    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "nucleoUrl", $robots[$robot]->{nucleoUrl});
     BOTVAC_ReadingsBulkUpdateIfChanged($hash, "robot",     $robot);
 }
 
@@ -980,7 +1019,8 @@ sub BOTVAC_GetCleaningParameter($$$) {
   my ($hash, $param, $default) = @_;
   my $name = $hash->{NAME};
 
-  return AttrVal($name, $param, ReadingsVal($name, $param, $default));
+  my $nextReading = "next".ucfirst($param);
+  return ReadingsVal($name, $nextReading, ReadingsVal($name, $param, $default));
 }
 
 sub BOTVAC_GetServiceVersion($$) {
@@ -999,35 +1039,7 @@ sub BOTVAC_SetServices {
   my $name = $hash->{NAME};
   my $serviceList = join(", ", map { "$_:$services->{$_}" } keys %$services);;
 
-  if (!defined($hash->{SERVICES}) or $hash->{SERVICES} ne $serviceList) {
-    $hash->{SERVICES} = $serviceList;
-
-    my $houseCleaningSrv = BOTVAC_GetServiceVersion($hash, "houseCleaning");
-    my $spotCleaningSrv = BOTVAC_GetServiceVersion($hash, "spotCleaning");
-    my @attributes;
-
-    # module attributes
-    push(@attributes, "disable:0,1");
-    push(@attributes, "actionInterval");
-    push(@attributes, "boundaries:textField-long");
-    push(@attributes, $readingFnAttributes);
-
-    # house cleaning
-    push(@attributes, "cleaningMode:eco,turbo") if ($houseCleaningSrv =~ /basic-\d/);
-    push(@attributes, "cleaningNavigationMode:normal,extra#care") if ($houseCleaningSrv eq "minimal-2");
-    push(@attributes, " cleaningNavigationMode:normal,extra#care,deep") if ($houseCleaningSrv eq "basic-3");
-
-    #spot cleaning
-    push(@attributes, " cleaningModifier:normal,double") if ($spotCleaningSrv eq "basic-1" or $spotCleaningSrv eq "minimal-2");
-    if ($spotCleaningSrv =~ /basic-\d/) {
-      push(@attributes, " cleaningSpotWidth:100,200,300,400");
-      push(@attributes, " cleaningSpotHeight:100,200,300,400");
-    }
-
-    my $attrList = join(" ", @attributes);
-    Log3 $name, 5, "BOTVAC $name: set device specific attribute list: $attrList";
-    setDevAttrList($name, $attrList);
-  }
+  $hash->{SERVICES} = $serviceList if (!defined($hash->{SERVICES}) or $hash->{SERVICES} ne $serviceList);
 }
 
 sub BOTVAC_StorePassword($$) {
@@ -1300,6 +1312,11 @@ sub BOTVAC_GetNucleoHost($) {
     } else {
         return $vendors->{neato};
     }
+}
+
+sub BOTVAC_GetValidityEnd($) {
+    my ($validFor) = @_;
+    return ($validFor =~ /\d+/ ? FmtDateTime(time() + $validFor) : $validFor);
 }
 
 sub BOTVAC_ShowMap($;$$) {
