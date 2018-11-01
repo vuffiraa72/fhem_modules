@@ -169,21 +169,24 @@ sub BOTVAC_Set($@) {
     }
 
     if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1" or BOTVAC_GetServiceVersion($hash, "maps") eq "macro-1") {
-      my @Boundaries;
       if (defined($hash->{helper}{BoundariesList})) {
-        @Boundaries = @{$hash->{helper}{BoundariesList}};
+        my @Boundaries = @{$hash->{helper}{BoundariesList}};
         my @names;
         for (my $i = 0; $i < @Boundaries; $i++) {
           my $name = $Boundaries[$i]->{name};
           push @names,$name if (!(grep { $_ eq $name } @names) and ($name ne ""));
-         }
-         my $BoundariesList  = @names ? join(",", @names) : "textField";
-         $usage .= " setBoundaries:".$BoundariesList;
-       }
+        }
+        my $BoundariesList  = @names ? join(",", @names) : "textField";
+        $usage .= " setBoundariesOnFloorplan_0:".$BoundariesList if (ReadingsVal($name, "floorplan_0_id" ,"") ne "");
+        $usage .= " setBoundariesOnFloorplan_1:".$BoundariesList if (ReadingsVal($name, "floorplan_1_id" ,"") ne "");
+        $usage .= " setBoundariesOnFloorplan_2:".$BoundariesList if (ReadingsVal($name, "floorplan_2_id" ,"") ne "");
+      }
       else {
-        $usage .= " setBoundaries:textField";
-       }
-     }
+        $usage .= " setBoundariesOnFloorplan_0:textField" if (ReadingsVal($name, "floorplan_0_id" ,"") ne "");
+        $usage .= " setBoundariesOnFloorplan_1:textField" if (ReadingsVal($name, "floorplan_1_id" ,"") ne "");
+        $usage .= " setBoundariesOnFloorplan_2:textField" if (ReadingsVal($name, "floorplan_2_id" ,"") ne "");
+      }
+    }
 
     my $cmd = '';
     my $result;
@@ -308,12 +311,13 @@ sub BOTVAC_Set($@) {
     elsif ( $a[1] eq "reloadMaps" ) {
         Log3 $name, 2, "BOTVAC set $name $arg";
 
-        BOTVAC_SendCommand( $hash, "maps" );
+        BOTVAC_SendCommand( $hash, "robots", "maps");
     }
 
     # setBoundaries
-    elsif ( $a[1] eq "setBoundaries") {
-         Log3 $name, 2, "BOTVAC set $name $arg";
+    elsif ( $a[1] =~ /^setBoundariesOnFloorplan_\d$/) {
+        my $floorplan = substr($a[1],25,1);
+        Log3 $name, 2, "BOTVAC set $name $arg";
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -337,7 +341,7 @@ sub BOTVAC_Set($@) {
         Log3 $name, 5, "BOTVAC set $name " . $a[1] . " " . $a[2] . " json: " . $setBoundaries;
         my %params;
         $params{"boundaries"} = "\[".$setBoundaries."\]";
-        $params{"mapId"} = "\"".ReadingsVal($name, "map_persistent_id", "myHome")."\"";
+        $params{"mapId"} = "\"".ReadingsVal($name, "floorplan_".$floorplan."_id", "myHome")."\"";
         BOTVAC_SendCommand( $hash, "messages", "setMapBoundaries", \%params );
         return;
     }
@@ -520,6 +524,7 @@ sub BOTVAC_SendCommand($$;$$@) {
     my $timeout     = 180;
     my $header;
     my $data;
+    my $reqId = 0;
 
     Log3 $name, 5, "BOTVAC $name: called function BOTVAC_SendCommand()";
 
@@ -565,13 +570,14 @@ sub BOTVAC_SendCommand($$;$$@) {
       $URL .= "/dashboard";
       %sslArgs = ( SSL_verify_mode => 0 );
 
-    } elsif ($service eq "maps") {
+    } elsif ($service eq "robots") {
       my $serial = ReadingsVal($name, "serial", "");
       return if ($serial eq "");
 
       $header .= "\r\nAuthorization: Token token=".ReadingsVal($name, "accessToken", "");
       $URL .= BOTVAC_GetBeehiveHost($hash->{VENDOR});
-      $URL .= "/users/me/robots/$serial/maps";
+      $URL .= "/users/me/robots/$serial/";
+      $URL .= (defined($cmd) ? $cmd : "maps");
       %sslArgs = ( SSL_verify_mode => 0 );
 
     } elsif ($service eq "messages") {
@@ -582,8 +588,14 @@ sub BOTVAC_SendCommand($$;$$@) {
       $URL .= "/vendors/";
       $URL .= $hash->{VENDOR};
       $URL .= "/robots/$serial/messages";
-      
-      $data = "{\"reqId\":\"1\",\"cmd\":\"$cmd\"";
+
+      if (defined($option) and ref($option) eq "HASH" ) {
+        if (defined(%$option{reqId})){;
+          $reqId = %$option{reqId};
+        }
+      }
+
+      $data = "{\"reqId\":\"$reqId\",\"cmd\":\"$cmd\"";
       if ($cmd eq "startCleaning") {
         $data .= ",\"params\":{";
         my $version = BOTVAC_GetServiceVersion($hash, "houseCleaning");
@@ -613,8 +625,9 @@ sub BOTVAC_SendCommand($$;$$@) {
           }
         }          
         $data .= "}";
-      } elsif ($cmd eq "startSpot") {
-        $data = "{\"reqId\":\"1\",\"cmd\":\"startCleaning\"";
+      }
+      elsif ($cmd eq "startSpot") {
+        $data = "{\"reqId\":\"$reqId\",\"cmd\":\"startCleaning\"";
         $data .= ",\"params\":{";
         $data .= "\"category\":3";
         my $version = BOTVAC_GetServiceVersion($hash, "spotCleaning");
@@ -637,11 +650,12 @@ sub BOTVAC_SendCommand($$;$$@) {
           $data .= BOTVAC_GetCleaningParameter($hash, "cleaningSpotHeight", "200");
         }          
         $data .= "}";
-      } elsif ($cmd eq "setMapBoundaries") {   
+      }
+      elsif ($cmd eq "setMapBoundaries" or $cmd eq "getMapBoundaries") {   
         if (defined($option) and ref($option) eq "HASH") {
           $data .= ",\"params\":{";
           foreach( keys %$option ) {
-            $data .= "\"$_\":$option->{$_},"; 
+            $data .= "\"$_\":$option->{$_}," if ($_ ne "reqId");
           }
           my $tmp = chop($data);  #remove last ","
           $data .= "}";
@@ -705,7 +719,8 @@ sub BOTVAC_ReceiveCommand($$$) {
     
     my $loadMap;
     my $return;
-    
+    my $reqId = 0;
+
     Log3 $name, 5, "BOTVAC $name: called function BOTVAC_ReceiveCommand() rc: $rc err: $err data: $data ";
 
     readingsBeginUpdate($hash);
@@ -782,6 +797,7 @@ sub BOTVAC_ReceiveCommand($$$) {
           } 
           elsif ( $cmd eq "getMapBoundaries" ) {
               if ( ref($return->{data}) eq "HASH" ) {
+                $reqId = $return->{reqId};
                 my $boundariesData = $return->{data};
                 if (ref($boundariesData->{boundaries}) eq "ARRAY") {
                   my @boundaries = @{$boundariesData->{boundaries}};
@@ -809,7 +825,7 @@ sub BOTVAC_ReceiveCommand($$$) {
                     $boundariesList .= "},";
                   }
                   $tmp = chop($boundariesList);  #remove last ","
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "boundaries", $boundariesList);
+                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "floorplan_".$reqId."_boundaries", $boundariesList);
                 }
               }
           } 
@@ -817,7 +833,7 @@ sub BOTVAC_ReceiveCommand($$$) {
             # getRobotState, startCleaning, pauseCleaning, stopCleaning, resumeCleaning,
             # sendToBase, setMapBoundaries, getRobotManualCleaningInfo
             if ( ref($return) eq "HASH" ) {
-              push(@successor , ["maps"])
+              push(@successor , ["robots", "maps"])
                   if ($cmd eq "setMapBoundaries" or 
                       (defined($return->{state}) and
                        ($return->{state} == 1 or $return->{state} == 4) and   # Idle or Error
@@ -915,38 +931,43 @@ sub BOTVAC_ReceiveCommand($$$) {
 
               BOTVAC_SetRobot($hash, ReadingsNum($name, "robot", 0));
               
-              push(@successor , ["maps"]);
+              push(@successor , ["robots", "maps"]);
             }
           }
         }
-    
-        # maps
-        elsif ( $service eq "maps" ) {
-          if ( ref($return) eq "HASH" ) {
-            if ( ref($return->{maps} ) eq "ARRAY" ) {
-              my @mapList = ();
-              my @maps = @{$return->{maps}};
-              # take first - newest
-              my $map = $maps[0];
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date",   BOTVAC_GetTimeFromString($map->{generated_at}));
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
-              $loadMap = 1;
-              # search newest persistent map
-              for (my $i = 0; $i < @maps; $i++) {
-                if ($maps[$i]->{valid_as_persistent_map} or defined($maps[$i]->{cleaned_with_persistent_map_id})){
-                  my $map_persistent_id = ($maps[$i]->{valid_as_persistent_map}) ? $maps[$i]->{id} : $maps[$i]->{cleaned_with_persistent_map_id};
-                  Log3 $name, 5, "BOTVAC $name: found persistent mapId: $map_persistent_id";
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_persistent_id", $map_persistent_id);
-                  # getMapBoundaries
-                  if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1" or BOTVAC_GetServiceVersion($hash, "maps") eq "macro-1") {
-                    my %params;
-                    $params{"mapId"} = "\"".$map_persistent_id."\"";
-                    push(@successor , ["messages", "getMapBoundaries", \%params]);
-                  }
-                  last;
+
+        # robots
+        elsif ( $service eq "robots" ) {
+          if ( $cmd eq "maps" ) {
+            if ( ref($return) eq "HASH" ) {
+              if ( ref($return->{maps} ) eq "ARRAY" ) {
+                my @mapList = ();
+                my @maps = @{$return->{maps}};
+                # take first - newest
+                my $map = $maps[0];
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date",   BOTVAC_GetTimeFromString($map->{generated_at}));
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
+                $loadMap = 1;
+                # getPersistentMaps
+                push(@successor , ["robots", "persistent_maps"]);
+              }
+            }
+          }
+          elsif ( $cmd eq "persistent_maps" ) {
+            if ( ref($return) eq "ARRAY" ) {
+              my @persistent_maps = @{$return};
+              for (my $i = 0; $i < @persistent_maps; $i++) {
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "floorplan_".$i."_name", $persistent_maps[$i]->{name});
+                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "floorplan_".$i."_id", $persistent_maps[$i]->{id});
+                # getMapBoundaries
+                if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1" or BOTVAC_GetServiceVersion($hash, "maps") eq "macro-1"){
+                  my %params;
+                  $params{"reqId"} = $i;
+                  $params{"mapId"} = "\"".$persistent_maps[$i]->{id}."\"";
+                  push(@successor , ["messages", "getMapBoundaries", \%params]);
                 }
               }
             }
@@ -981,8 +1002,17 @@ sub BOTVAC_ReceiveCommand($$$) {
       $cmdCmd    = $nextCmd[1] if ($cmdLength > 1);
       $cmdOption = $nextCmd[2] if ($cmdLength > 2);
 
+      my $cmdReqId;
+      my $newReqId = "false";
+      if (defined($cmdOption) and ref($cmdOption) eq "HASH" ) {
+        if (defined(%$cmdOption{reqId})){;
+          $cmdReqId = %$cmdOption{reqId};
+          $newReqId = "true" if ($reqId ne $cmdReqId);
+        }
+      }
+
       BOTVAC_SendCommand($hash, $cmdService, $cmdCmd, $cmdOption, @successor)
-          if ($service ne $cmdService or $cmd ne $cmdCmd);
+          if (($service ne $cmdService) or ($cmd ne $cmdCmd) or ($newReqId = "true"));
     }
 
     return;
