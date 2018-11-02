@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 047 2018-10-24 21:25:09Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 048 2018-11-02 21:25:09Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.7
+# Version: 0.4.8
 #
 ##############################################################################
 
@@ -590,8 +590,8 @@ sub BOTVAC_SendCommand($$;$$@) {
       $URL .= "/robots/$serial/messages";
 
       if (defined($option) and ref($option) eq "HASH" ) {
-        if (defined(%$option{reqId})){;
-          $reqId = %$option{reqId};
+        if (defined($option->{reqId})) {
+          $reqId = $option->{reqId};
         }
       }
 
@@ -1005,8 +1005,8 @@ sub BOTVAC_ReceiveCommand($$$) {
       my $cmdReqId;
       my $newReqId = "false";
       if (defined($cmdOption) and ref($cmdOption) eq "HASH" ) {
-        if (defined(%$cmdOption{reqId})){;
-          $cmdReqId = %$cmdOption{reqId};
+        if (defined($cmdOption->{reqId})) {
+          $cmdReqId = $cmdOption->{reqId};
           $newReqId = "true" if ($reqId ne $cmdReqId);
         }
       }
@@ -1473,14 +1473,14 @@ sub BOTVAC_GetMap() {
 	<li>
 	batteryPercent
 	<br>
-      	requests the state of the battery hopefully directly from Robot
+      	requests the state of the battery from Robot
 	</li>
 	<br>
 
 </ul><br>
 
   <a name="BOTVACset"></a>
-  <b>Get</b>
+  <b>Set</b>
 <ul>
 	<a name="findMe"></a>
 	<li>
@@ -1554,15 +1554,15 @@ sub BOTVAC_GetMap() {
 	<li>
 	pause
 	<br>
-      	breaks the cleaning
+      	interrupts the cleaning
 	</li>
 	<br>
 
 	<a name="pauseToBase"></a>
 	<li>
-	stops cleaning and returns to base
+	pauseToBase
 	<br>
-      
+	      stops cleaning and returns to base
 	</li>
 	<br>
 
@@ -1576,9 +1576,9 @@ sub BOTVAC_GetMap() {
 
 	<a name="resume"></a>
 	<li>
-	resume cleaning after pause
+	resume
 	<br>
-      
+       resume cleaning after pause
 	</li>
 	<br>
 
@@ -1603,6 +1603,23 @@ sub BOTVAC_GetMap() {
 	setBoundaries
 	<br>
       set boundaries/nogo lines
+	</li>
+	<br>
+
+	<a name="setBoundariesOnFloorplan"></a>
+	<li>
+	setBoundariesOnFloorplan_&lt;floor plan&gt; &lt;name|{JSON String}&gt;
+	<br>
+    Set boundaries/nogo lines in the corresponding floor plan.<br>
+    The paramter can either be a name, which is already defined by attribute "boundaries", or alternatively a JSON string.
+    (A comma-separated list of names is also possible.)<br>
+    Description of syntax at <a href>https://developers.neatorobotics.com/api/robot-remote-protocol/maps</a><br>
+    <br>
+    Examples:<br>
+    set &lt;name&gt; setBoundariesOnFloorplan_0 Bad<br>
+    set &lt;name&gt; setBoundariesOnFloorplan_0 Bad,Kueche<br>
+    set &lt;name&gt; setBoundariesOnFloorplan_0 {"type":"polyline","vertices":[[0.710,0.6217],[0.710,0.6923]],
+      "name":"Bad","color":"#E54B1C","enabled":true}
 	</li>
 	<br>
 
@@ -1704,7 +1721,14 @@ sub BOTVAC_GetMap() {
 	<li>
 	boundaries
 	<br>
-      
+	  Boundary entries separated by space in JSON format, e.g.<br>
+    {"type":"polyline","vertices":[[0.710,0.6217],[0.710,0.6923]],"name":"Bad","color":"#E54B1C","enabled":true}<br>
+    {"type":"polyline","vertices":[[0.7139,0.4101],[0.7135,0.4282],[0.4326,0.3322],[0.4326,0.2533],[0.3931,0.2533],
+      [0.3931,0.3426],[0.7452,0.4637],[0.7617,0.4196]],"name":"Kueche","color":"#000000","enabled":true}<br>
+    For description of syntax see: <a href>https://developers.neatorobotics.com/api/robot-remote-protocol/maps</a><br>
+    The value of paramter "name" is used as setListe for "setBoundariesOnFloorplan_&lt;floor plan&gt;".
+    It is also possible to save more than one boundary with the same name.
+    The command "setBoundariesOnFloorplan_&lt;floor plan&gt; &lt;name&gt;" sends all boundary with the same name.
 	</li>
 	<br>
 	<a name="oldreadings"></a>
