@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 049 2018-11-18 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 050 2018-12-09 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,78 +23,165 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.4.9
+# Version: 0.5.0
 #
 ##############################################################################
 
 package main;
 
-use 5.012;
 use strict;
 use warnings;
+
+
+sub BOTVAC_Initialize($) {
+    my ($hash) = @_;
+
+    $hash->{DefFn}    = "BOTVAC::Define";
+    $hash->{GetFn}    = "BOTVAC::Get";
+    $hash->{SetFn}    = "BOTVAC::Set";
+    $hash->{UndefFn}  = "BOTVAC::Undefine";
+    $hash->{DeleteFn} = "BOTVAC::Delete";
+    $hash->{AttrFn}   = "BOTVAC::Attr";
+    $hash->{AttrList} = "disable:0,1 " .
+                        "actionInterval " .
+                        "boundaries:textField-long " .
+                         $::readingFnAttributes;
+}
+
+
+package BOTVAC;
+
+use strict;
+use warnings;
+use POSIX;
+
+use GPUtils qw(:all);  # wird für den Import der FHEM Funktionen aus der fhem.pl benötigt
+
 use Time::HiRes qw(gettimeofday);
-use HttpUtils;
 use JSON qw(decode_json);
 #use IO::Socket::SSL::Utils qw(PEM_string2cert);
 use Digest::SHA qw(hmac_sha256_hex);
 use Encode qw(encode_utf8);
 
-sub BOTVAC_Set($@);
-sub BOTVAC_Get($@);
-sub BOTVAC_GetStatus($;$);
-sub BOTVAC_Define($$);
-sub BOTVAC_Undefine($$);
+## Import der FHEM Funktionen
+BEGIN {
+    GP_Import(qw(
+        AttrVal
+        createUniqueId
+        FmtDateTimeRFC1123
+        getKeyValue
+        getUniqueId
+        InternalTimer
+        InternalVal
+        readingsSingleUpdate
+        readingsBulkUpdate
+        readingsBulkUpdateIfChanged
+        readingsBeginUpdate
+        readingsEndUpdate
+        ReadingsNum
+        ReadingsVal
+        RemoveInternalTimer
+        Log3
+    ))
+};
 
 ###################################
-sub BOTVAC_Initialize($) {
-    my ($hash) = @_;
+sub Define($$) {
+    my ( $hash, $def ) = @_;
+    my @a = split( "[ \t][ \t]*", $def );
+    my $name = $hash->{NAME};
 
-    Log3 $hash, 5, "BOTVAC_Initialize: Entering";
+    Log3($name, 5, "BOTVAC $name: called function Define()");
 
-    $hash->{GetFn}    = "BOTVAC_Get";
-    $hash->{SetFn}    = "BOTVAC_Set";
-    $hash->{DefFn}    = "BOTVAC_Define";
-    $hash->{UndefFn}  = "BOTVAC_Undefine";
-    $hash->{DeleteFn} = "BOTVAC_Delete";
-    $hash->{AttrFn}   = "BOTVAC_Attr";
-    $hash->{AttrList} = "disable:0,1 " .
-                        "actionInterval " .
-                        "boundaries:textField-long " .
-                         $readingFnAttributes;
+    if ( int(@a) < 3 ) {
+        my $msg =
+          "Wrong syntax: define <name> BOTVAC <email> [<vendor>] [<poll-interval>]";
+        Log3($name, 4, $msg);
+        return $msg;
+    }
+
+    $hash->{TYPE} = "BOTVAC";
+
+    my $email = $a[2];
+    $hash->{EMAIL} = $email;
+
+    # defaults
+    my $vendor = "neato";
+    my $interval = 85;
+
+    if (defined($a[3])) {
+      if ($a[3] =~ /^(neato|vorwerk)$/) {
+        $vendor = $a[3];
+        $interval = $a[4] if (defined($a[4]));
+      } elsif ($a[3] =~ /^[0-9]+$/ and not defined($a[4])) {
+        $interval = $a[3];
+      } else {
+        StorePassword($hash, $a[3]);
+        if (defined($a[4])) {
+          if ($a[4] =~ /^(neato|vorwerk)$/) {
+            $vendor = $a[4];
+            $interval = $a[5] if (defined($a[5]));
+          } else {
+            $interval = $a[5];
+          }
+        }
+      }
+    }
+    $hash->{VENDOR} = $vendor;
+    $hash->{INTERVAL} = $interval;
+
+    unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
+        $::attr{$name}{webCmd} = 'startCleaning:stop:sendToBase';
+    }
+
+    # start the status update timer
+    RemoveInternalTimer($hash);
+    InternalTimer( gettimeofday() + 2, "BOTVAC::GetStatus", $hash, 1 );
+
+    AddExtension($name, "BOTVAC::GetMap", "BOTVAC/$name/map");
+
     return;
 }
 
 #####################################
-sub BOTVAC_GetStatus($;$) {
+sub GetStatus($;$) {
     my ( $hash, $update ) = @_;
     my $name     = $hash->{NAME};
     my $interval = $hash->{INTERVAL};
     
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_GetStatus()";
+    Log3($name, 5, "BOTVAC $name: called function GetStatus()");
 
     # use actionInterval if state is busy or paused
     $interval = AttrVal($name, "actionInterval", $interval) if (ReadingsVal($name, "stateId", "0") =~ /2|3/);
 
     RemoveInternalTimer($hash);
-    InternalTimer( gettimeofday() + $interval, "BOTVAC_GetStatus", $hash, 0 );
+    InternalTimer( gettimeofday() + $interval, "BOTVAC::GetStatus", $hash, 0 );
 
     return if ( AttrVal($name, "disable", 0) == 1 );
 
     # check device availability
     if (!$update) {
-      BOTVAC_SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
+      my @time = localtime();
+      my $secs = ($time[2] * 3600) + ($time[1] * 60) + $time[0];
+
+      if ($secs <= $interval) {
+        # update once per day
+        SendCommand( $hash, "dashboard", undef, undef, (["messages", "getRobotState"], ["messages", "getSchedule"]) ); 
+      } else {
+        SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
+      }        
     }
 
     return;
 }
 
 ###################################
-sub BOTVAC_Get($@) {
+sub Get($@) {
     my ( $hash, @a ) = @_;
     my $name = $hash->{NAME};
     my $what;
 
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_Get()";
+    Log3($name, 5, "BOTVAC $name: called function Get()");
 
     return "argument is missing" if ( int(@a) < 2 );
 
@@ -112,11 +199,11 @@ sub BOTVAC_Get($@) {
 }
 
 ###################################
-sub BOTVAC_Set($@) {
+sub Set($@) {
     my ( $hash, @a ) = @_;
     my $name  = $hash->{NAME};
 
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_Set()";
+    Log3($name, 5, "BOTVAC $name: called function Set()");
 
     return "No Argument given" if ( !defined( $a[1] ) );
 
@@ -129,7 +216,7 @@ sub BOTVAC_Set($@) {
     $usage .= " password";
     if ( ReadingsVal($name, ".start", "0") ) {
       $usage .= " startCleaning:";
-      $usage .= (BOTVAC_GetServiceVersion($hash, "houseCleaning") eq "basic-3" ? "house,map" : "noArg");
+      $usage .= (GetServiceVersion($hash, "houseCleaning") eq "basic-3" ? "house,map" : "noArg");
       $usage .= " startSpot:noArg";
     }
     $usage .= " stop:noArg"                if ( ReadingsVal($name, ".stop", "0") );
@@ -137,14 +224,14 @@ sub BOTVAC_Set($@) {
     $usage .= " pauseToBase:noArg"         if ( ReadingsVal($name, ".pause", "0") and ReadingsVal($name, "dockHasBeenSeen", "0") );
     $usage .= " resume:noArg"              if ( ReadingsVal($name, ".resume", "0") );
     $usage .= " sendToBase:noArg"          if ( ReadingsVal($name, ".goToBase", "0") );
-    $usage .= " reloadMaps:noArg"          if ( BOTVAC_GetServiceVersion($hash, "maps") ne "" );
+    $usage .= " reloadMaps:noArg"          if ( GetServiceVersion($hash, "maps") ne "" );
     $usage .= " dismissCurrentAlert:noArg" if ( ReadingsVal($name, "alert", "") ne "" );
-    $usage .= " findMe:noArg"              if ( BOTVAC_GetServiceVersion($hash, "findMe") eq "basic-1" );
-    $usage .= " manualCleaningMode:noArg"  if ( BOTVAC_GetServiceVersion($hash, "manualCleaning") ne "" );
+    $usage .= " findMe:noArg"              if ( GetServiceVersion($hash, "findMe") eq "basic-1" );
+    $usage .= " manualCleaningMode:noArg"  if ( GetServiceVersion($hash, "manualCleaning") ne "" );
     $usage .= " statusRequest:noArg schedule:on,off syncRobots:noArg";
     
-    my $houseCleaningSrv = BOTVAC_GetServiceVersion($hash, "houseCleaning");
-    my $spotCleaningSrv = BOTVAC_GetServiceVersion($hash, "spotCleaning");
+    my $houseCleaningSrv = GetServiceVersion($hash, "houseCleaning");
+    my $spotCleaningSrv = GetServiceVersion($hash, "spotCleaning");
     # house cleaning
     $usage .= " nextCleaningMode:eco,turbo" if ($houseCleaningSrv =~ /basic-\d/);
     $usage .= " nextCleaningNavigationMode:normal,extra#care" if ($houseCleaningSrv eq "minimal-2");
@@ -168,7 +255,7 @@ sub BOTVAC_Set($@) {
       }
     }
 
-    if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1" or BOTVAC_GetServiceVersion($hash, "maps") eq "macro-1") {
+    if (GetServiceVersion($hash, "maps") eq "advanced-1" or GetServiceVersion($hash, "maps") eq "macro-1") {
       if (defined($hash->{helper}{BoundariesList})) {
         my @Boundaries = @{$hash->{helper}{BoundariesList}};
         my @names;
@@ -194,107 +281,107 @@ sub BOTVAC_Set($@) {
 
     # house cleaning
     if ( $a[1] eq "startCleaning" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
         my $option = "2";
         $option = "4" if (defined($a[2]) and $a[2] eq "map");
-        BOTVAC_SendCommand( $hash, "messages", "startCleaning", $option );
+        SendCommand( $hash, "messages", "startCleaning", $option );
     }
 
     # spot cleaning
     elsif ( $a[1] eq "startSpot" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "startSpot" );
+        SendCommand( $hash, "messages", "startSpot" );
     }
 
     # stop
     elsif ( $a[1] eq "stop" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "stopCleaning" );
+        SendCommand( $hash, "messages", "stopCleaning" );
     }
 
     # pause
     elsif ( $a[1] eq "pause" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning" );
+        SendCommand( $hash, "messages", "pauseCleaning" );
     }
 
     # pauseToBase
     elsif ( $a[1] eq "pauseToBase" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "pauseCleaning", undef, (["messages", "sendToBase"]) );
+        SendCommand( $hash, "messages", "pauseCleaning", undef, (["messages", "sendToBase"]) );
     }
 
     # resume
     elsif ( $a[1] eq "resume" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "resumeCleaning" );
+        SendCommand( $hash, "messages", "resumeCleaning" );
     }
 
     # sendToBase
     elsif ( $a[1] eq "sendToBase" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "sendToBase" );
+        SendCommand( $hash, "messages", "sendToBase" );
     }
 
     # dismissCurrentAlert
     elsif ( $a[1] eq "dismissCurrentAlert" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "dismissCurrentAlert" );
+        SendCommand( $hash, "messages", "dismissCurrentAlert" );
     }
 
     # findMe
     elsif ( $a[1] eq "findMe" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "findMe" );
+        SendCommand( $hash, "messages", "findMe" );
     }
 
     # manualCleaningMode
     elsif ( $a[1] eq "manualCleaningMode" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "getRobotManualCleaningInfo" );
+        SendCommand( $hash, "messages", "getRobotManualCleaningInfo" );
     }
 
     # schedule
     elsif ( $a[1] eq "schedule" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
         return "No argument given" if ( !defined( $a[2] ) );
 
         my $switch = $a[2];
         if ($switch eq "on") {
-            BOTVAC_SendCommand( $hash, "messages", "enableSchedule" );
+            SendCommand( $hash, "messages", "enableSchedule" );
         } else {
-            BOTVAC_SendCommand( $hash, "messages", "disableSchedule" );
+            SendCommand( $hash, "messages", "disableSchedule" );
         }
     }
 
     # syncRobots
     elsif ( $a[1] eq "syncRobots" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "dashboard" );
+        SendCommand( $hash, "dashboard" );
     }
 
     # statusRequest
     elsif ( $a[1] eq "statusRequest" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
+        SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
     }
 
     # setRobot
     elsif ( $a[1] eq "setRobot" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -303,21 +390,21 @@ sub BOTVAC_Set($@) {
           $robot++;
         }
         readingsBeginUpdate($hash);
-        BOTVAC_SetRobot($hash, $robot);
+        SetRobot($hash, $robot);
         readingsEndUpdate( $hash, 1 );
     }
     
     # reloadMaps
     elsif ( $a[1] eq "reloadMaps" ) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
-        BOTVAC_SendCommand( $hash, "robots", "maps");
+        SendCommand( $hash, "robots", "maps");
     }
 
     # setBoundaries
     elsif ( $a[1] =~ /^setBoundariesOnFloorplan_\d$/) {
         my $floorplan = substr($a[1],25,1);
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -338,17 +425,17 @@ sub BOTVAC_Set($@) {
           }
         }
         return "Argument of $a[1] is not a valid Boundarie name and also not a JSON string: \"$a[2]\"" if ($setBoundaries eq "");
-        Log3 $name, 5, "BOTVAC set $name " . $a[1] . " " . $a[2] . " json: " . $setBoundaries;
+        Log3($name, 5, "BOTVAC set $name " . $a[1] . " " . $a[2] . " json: " . $setBoundaries);
         my %params;
         $params{"boundaries"} = "\[".$setBoundaries."\]";
         $params{"mapId"} = "\"".ReadingsVal($name, "floorplan_".$floorplan."_id", "myHome")."\"";
-        BOTVAC_SendCommand( $hash, "messages", "setMapBoundaries", \%params );
+        SendCommand( $hash, "messages", "setMapBoundaries", \%params );
         return;
     }
 
     # nextCleaning
     elsif ( $a[1] =~ /nextCleaning/) {
-        Log3 $name, 2, "BOTVAC set $name $arg";
+        Log3($name, 2, "BOTVAC set $name $arg");
 
         return "No argument given" if ( !defined( $a[2] ) );
 
@@ -357,11 +444,11 @@ sub BOTVAC_Set($@) {
     
     # password
     elsif ( $a[1] eq "password") {
-        Log3 $name, 2, "BOTVAC set $name " . $a[1];
+        Log3($name, 2, "BOTVAC set $name " . $a[1]);
 
         return "No password given" if ( !defined( $a[2] ) );
 
-        BOTVAC_StorePassword( $hash, $a[2] );
+        StorePassword( $hash, $a[2] );
     }
 
     # return usage hint
@@ -373,84 +460,26 @@ sub BOTVAC_Set($@) {
 }
 
 ###################################
-sub BOTVAC_Define($$) {
-    my ( $hash, $def ) = @_;
-    my @a = split( "[ \t][ \t]*", $def );
-    my $name = $hash->{NAME};
-
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_Define()";
-
-    if ( int(@a) < 3 ) {
-        my $msg =
-          "Wrong syntax: define <name> BOTVAC <email> [<vendor>] [<poll-interval>]";
-        Log3 $name, 4, $msg;
-        return $msg;
-    }
-
-    $hash->{TYPE} = "BOTVAC";
-
-    my $email = $a[2];
-    $hash->{EMAIL} = $email;
-
-    # defaults
-    my $vendor = "neato";
-    my $interval = 85;
-
-    if (defined($a[3])) {
-      if ($a[3] =~ /^(neato|vorwerk)$/) {
-        $vendor = $a[3];
-        $interval = $a[4] if (defined($a[4]));
-      } elsif ($a[3] =~ /^[0-9]+$/ and not defined($a[4])) {
-        $interval = $a[3];
-      } else {
-        BOTVAC_StorePassword($hash, $a[3]);
-        if (defined($a[4])) {
-          if ($a[4] =~ /^(neato|vorwerk)$/) {
-            $vendor = $a[4];
-            $interval = $a[5] if (defined($a[5]));
-          } else {
-            $interval = $a[5];
-          }
-        }
-      }
-    }
-    $hash->{VENDOR} = $vendor;
-    $hash->{INTERVAL} = $interval;
-
-    unless ( defined( AttrVal( $name, "webCmd", undef ) ) ) {
-        $attr{$name}{webCmd} = 'startCleaning:stop:sendToBase';
-    }
-
-    # start the status update timer
-    RemoveInternalTimer($hash);
-    InternalTimer( gettimeofday() + 2, "BOTVAC_GetStatus", $hash, 1 );
-
-    BOTVAC_addExtension($name, "BOTVAC_GetMap", "BOTVAC/$name/map");
-
-    return;
-}
-
-###################################
-sub BOTVAC_Undefine($$) {
+sub Undefine($$) {
     my ( $hash, $arg ) = @_;
     my $name = $hash->{NAME};
 
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_Undefine()";
+    Log3($name, 5, "BOTVAC $name: called function Undefine()");
 
     # Stop the internal GetStatus-Loop and exit
     RemoveInternalTimer($hash);
 
-    BOTVAC_removeExtension("BOTVAC/$name/map");
+    RemoveExtension("BOTVAC/$name/map");
 
     return;
 }
 
 ###################################
-sub BOTVAC_Delete($$) {
+sub Delete($$) {
     my ( $hash, $arg ) = @_;
     my $name = $hash->{NAME};
 
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_Delete()";
+    Log3($name, 5, "BOTVAC $name: called function Delete()");
 
     my $index = $hash->{TYPE}."_".$name."_passwd";
     setKeyValue($index,undef);
@@ -459,10 +488,10 @@ sub BOTVAC_Delete($$) {
 }
 
 ###################################
-sub BOTVAC_Attr(@)
+sub Attr(@)
 {
   my ($cmd,$name,$attr_name,$attr_value) = @_;
-  my $hash  = $defs{$name};
+  my $hash  = $::defs{$name};
   my $err;
   if ($cmd eq "set") {
     if ($attr_name eq "boundaries") {
@@ -494,39 +523,39 @@ sub BOTVAC_Attr(@)
 ############################################################################################################
 
 #########################
-sub BOTVAC_addExtension($$$) {
+sub AddExtension($$$) {
     my ( $name, $func, $link ) = @_;
 
     my $url = "/$link";
-    Log3 $name, 2, "Registering BOTVAC $name for URL $url...";
-    $data{FWEXT}{$url}{deviceName} = $name;
-    $data{FWEXT}{$url}{FUNC}       = $func;
-    $data{FWEXT}{$url}{LINK}       = $link;
+    Log3($name, 2, "Registering BOTVAC $name for URL $url...");
+    $::data{FWEXT}{$url}{deviceName} = $name;
+    $::data{FWEXT}{$url}{FUNC}       = $func;
+    $::data{FWEXT}{$url}{LINK}       = $link;
 }
 
 #########################
-sub BOTVAC_removeExtension($) {
+sub RemoveExtension($) {
     my ($link) = @_;
 
     my $url  = "/$link";
-    my $name = $data{FWEXT}{$url}{deviceName};
-    Log3 $name, 2, "Unregistering BOTVAC $name for URL $url...";
-    delete $data{FWEXT}{$url};
+    my $name = $::data{FWEXT}{$url}{deviceName};
+    Log3($name, 2, "Unregistering BOTVAC $name for URL $url...");
+    delete $::data{FWEXT}{$url};
 }
 
 ###################################
-sub BOTVAC_SendCommand($$;$$@) {
+sub SendCommand($$;$$@) {
     my ( $hash, $service, $cmd, $option, @successor ) = @_;
     my $name        = $hash->{NAME};
     my $email       = $hash->{EMAIL};
-    my $password    = BOTVAC_ReadPassword($hash);
+    my $password    = ReadPassword($hash);
     my $timestamp   = gettimeofday();
     my $timeout     = 180;
     my $header;
     my $data;
     my $reqId = 0;
 
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_SendCommand()";
+    Log3($name, 5, "BOTVAC $name: called function SendCommand()");
 
     my $URL = "https://";
     my $response;
@@ -535,16 +564,16 @@ sub BOTVAC_SendCommand($$;$$@) {
     my %sslArgs;
 
     if ($service ne "sessions" && $service ne "dashboard") {
-        return if (BOTVAC_CheckRegistration($hash, $service, $cmd, $option, @successor));
+        return if (CheckRegistration($hash, $service, $cmd, $option, @successor));
     }
 
     if ( !defined($cmd) ) {
-        Log3 $name, 4, "BOTVAC $name: REQ $service";
+        Log3($name, 4, "BOTVAC $name: REQ $service");
     }
     else {
-        Log3 $name, 4, "BOTVAC $name: REQ $service/$cmd";
+        Log3($name, 4, "BOTVAC $name: REQ $service/$cmd");
     }
-    Log3 $name, 4, "BOTVAC $name: REQ option $option" if (defined($option));
+    Log3($name, 4, "BOTVAC $name: REQ option $option") if (defined($option));
     my $msg = "BOTVAC $name: REQ successors";
     my @succ_item;
     for (my $i = 0; $i < @successor; $i++) {
@@ -552,21 +581,22 @@ sub BOTVAC_SendCommand($$;$$@) {
       $msg .= " $i: ";
       $msg .= join(",", map { defined($_) ? $_ : '' } @succ_item);
     }
-    Log3 $name, 4, $msg;
+    Log3($name, 4, $msg);
 
     $header = "Accept: application/vnd.neato.nucleo.v1";
     $header .= "\r\nContent-Type: application/json";
 
     if ($service eq "sessions") {
+      return if (!defined($password));
       my $token = createUniqueId() . createUniqueId();
-      $URL .= BOTVAC_GetBeehiveHost($hash->{VENDOR});
+      $URL .= GetBeehiveHost($hash->{VENDOR});
       $URL .= "/sessions";
       $data = "{\"platform\": \"ios\", \"email\": \"$email\", \"token\": \"$token\", \"password\": \"$password\"}";
       %sslArgs = ( SSL_verify_mode => 0 );
 
     } elsif ($service eq "dashboard") {
       $header .= "\r\nAuthorization: Token token=".ReadingsVal($name, "accessToken", "");
-      $URL .= BOTVAC_GetBeehiveHost($hash->{VENDOR});
+      $URL .= GetBeehiveHost($hash->{VENDOR});
       $URL .= "/dashboard";
       %sslArgs = ( SSL_verify_mode => 0 );
 
@@ -575,7 +605,7 @@ sub BOTVAC_SendCommand($$;$$@) {
       return if ($serial eq "");
 
       $header .= "\r\nAuthorization: Token token=".ReadingsVal($name, "accessToken", "");
-      $URL .= BOTVAC_GetBeehiveHost($hash->{VENDOR});
+      $URL .= GetBeehiveHost($hash->{VENDOR});
       $URL .= "/users/me/robots/$serial/";
       $URL .= (defined($cmd) ? $cmd : "maps");
       %sslArgs = ( SSL_verify_mode => 0 );
@@ -584,7 +614,7 @@ sub BOTVAC_SendCommand($$;$$@) {
       my $serial = ReadingsVal($name, "serial", "");
       return if ($serial eq "");
 
-      $URL = ReadingsVal($name, "nucleoUrl", "https://".BOTVAC_GetNucleoHost($hash->{VENDOR}));
+      $URL = ReadingsVal($name, "nucleoUrl", "https://".GetNucleoHost($hash->{VENDOR}));
       $URL .= "/vendors/";
       $URL .= $hash->{VENDOR};
       $URL .= "/robots/$serial/messages";
@@ -598,24 +628,24 @@ sub BOTVAC_SendCommand($$;$$@) {
       $data = "{\"reqId\":\"$reqId\",\"cmd\":\"$cmd\"";
       if ($cmd eq "startCleaning") {
         $data .= ",\"params\":{";
-        my $version = BOTVAC_GetServiceVersion($hash, "houseCleaning");
+        my $version = GetServiceVersion($hash, "houseCleaning");
         if ($version eq "basic-1") {
           $data .= "\"category\":2";
           $data .= ",\"mode\":";
-          $data .= (BOTVAC_GetCleaningParameter($hash, "cleaningMode", "eco") eq "eco" ? "1" : "2");
+          $data .= (GetCleaningParameter($hash, "cleaningMode", "eco") eq "eco" ? "1" : "2");
           $data .= ",\"modifier\":1"; 
         } elsif ($version eq "minimal-2") {
           $data .= "\"category\":2";
           $data .= ",\"navigationMode\":";
-          $data .= (BOTVAC_GetCleaningParameter($hash, "cleaningNavigationMode", "normal") eq "normal" ? "1" : "2");
+          $data .= (GetCleaningParameter($hash, "cleaningNavigationMode", "normal") eq "normal" ? "1" : "2");
         } elsif ($version eq "basic-3") {
           $data .= "\"category\":";
           $data .= (defined($option) ? $option : "2");
           $data .= ",\"mode\":";
-          my $cleanMode = BOTVAC_GetCleaningParameter($hash, "cleaningMode", "eco");
+          my $cleanMode = GetCleaningParameter($hash, "cleaningMode", "eco");
           $data .= ($cleanMode eq "eco" ? "1" : "2");
           $data .= ",\"navigationMode\":";
-          my $navMode = BOTVAC_GetCleaningParameter($hash, "cleaningNavigationMode", "normal");
+          my $navMode = GetCleaningParameter($hash, "cleaningNavigationMode", "normal");
           if ($navMode eq "deep" and $cleanMode = "turbo") {
             $data .= "3";
           } elsif ($navMode eq "extra care") {
@@ -630,24 +660,24 @@ sub BOTVAC_SendCommand($$;$$@) {
         $data = "{\"reqId\":\"$reqId\",\"cmd\":\"startCleaning\"";
         $data .= ",\"params\":{";
         $data .= "\"category\":3";
-        my $version = BOTVAC_GetServiceVersion($hash, "spotCleaning");
+        my $version = GetServiceVersion($hash, "spotCleaning");
         if ($version eq "basic-1") {
           $data .= ",\"mode\":";
-          $data .= (BOTVAC_GetCleaningParameter($hash, "cleaningMode", "eco") eq "eco" ? "1" : "2");
+          $data .= (GetCleaningParameter($hash, "cleaningMode", "eco") eq "eco" ? "1" : "2");
         }
         if ($version eq "basic-1" or $version eq "minimal-2") {
           $data .= ",\"modifier\":"; 
-          $data .= (BOTVAC_GetCleaningParameter($hash, "cleaningModifier", "normal") eq "normal" ? "1" : "2");
+          $data .= (GetCleaningParameter($hash, "cleaningModifier", "normal") eq "normal" ? "1" : "2");
         }
         if ($version eq "micro-2" or $version eq "minimal-2") {
           $data .= ",\"navigationMode\":";
-          $data .= (BOTVAC_GetCleaningParameter($hash, "cleaningNavigationMode", "normal") eq "normal" ? "1" : "2");
+          $data .= (GetCleaningParameter($hash, "cleaningNavigationMode", "normal") eq "normal" ? "1" : "2");
         }
         if ($version eq "basic-1" or $version eq "basic-3") {
           $data .= ",\"spotWidth\":"; 
-          $data .= BOTVAC_GetCleaningParameter($hash, "cleaningSpotWidth", "200");
+          $data .= GetCleaningParameter($hash, "cleaningSpotWidth", "200");
           $data .= ",\"spotHeight\":"; 
-          $data .= BOTVAC_GetCleaningParameter($hash, "cleaningSpotHeight", "200");
+          $data .= GetCleaningParameter($hash, "cleaningSpotHeight", "200");
         }          
         $data .= "}";
       }
@@ -672,21 +702,21 @@ sub BOTVAC_SendCommand($$;$$@) {
       $header .= "\r\nDate: $date";
       $header .= "\r\nAuthorization: NEATOAPP $hmac";
 
-      #%sslArgs = ( SSL_ca =>  [ BOTVAC_GetCAKey( $hash ) ] );
+      #%sslArgs = ( SSL_ca =>  [ GetCAKey( $hash ) ] );
       %sslArgs = ( SSL_verify_mode => 0 );
     } elsif ($service eq "loadmap") {
       $URL = $cmd;
     }
 
     # send request via HTTP-POST method
-    Log3 $name, 5, "BOTVAC $name: POST $URL (" . urlDecode($data) . ")"
+    Log3($name, 5, "BOTVAC $name: POST $URL (" . ::urlDecode($data) . ")")
       if ( defined($data) );
-    Log3 $name, 5, "BOTVAC $name: GET $URL"
+    Log3($name, 5, "BOTVAC $name: GET $URL")
       if ( !defined($data) );
-    Log3 $name, 5, "BOTVAC $name: header $header"
+    Log3($name, 5, "BOTVAC $name: header $header")
       if ( defined($header) );
 
-    HttpUtils_NonblockingGet(
+    ::HttpUtils_NonblockingGet(
         {
             url         => $URL,
             timeout     => $timeout,
@@ -699,7 +729,7 @@ sub BOTVAC_SendCommand($$;$$@) {
             successor   => \@successor,
             timestamp   => $timestamp,
             sslargs     => { %sslArgs },
-            callback    => \&BOTVAC_ReceiveCommand,
+            callback    => \&ReceiveCommand,
         }
     );
 
@@ -707,7 +737,7 @@ sub BOTVAC_SendCommand($$;$$@) {
 }
 
 ###################################
-sub BOTVAC_ReceiveCommand($$$) {
+sub ReceiveCommand($$$) {
     my ( $param, $err, $data ) = @_;
     my $hash      = $param->{hash};
     my $name      = $hash->{NAME};
@@ -721,7 +751,7 @@ sub BOTVAC_ReceiveCommand($$$) {
     my $return;
     my $reqId = 0;
 
-    Log3 $name, 5, "BOTVAC $name: called function BOTVAC_ReceiveCommand() rc: $rc err: $err data: $data ";
+    Log3($name, 5, "BOTVAC $name: called function ReceiveCommand() rc: $rc err: $err data: $data ");
 
     readingsBeginUpdate($hash);
 
@@ -729,22 +759,22 @@ sub BOTVAC_ReceiveCommand($$$) {
     if ($err) {
 
         if ( !defined($cmd) || $cmd eq "" ) {
-            Log3 $name, 4, "BOTVAC $name:$service RCV $err";
+            Log3($name, 4, "BOTVAC $name:$service RCV $err");
         } else {
-            Log3 $name, 4, "BOTVAC $name:$service/$cmd RCV $err";
+            Log3($name, 4, "BOTVAC $name:$service/$cmd RCV $err");
         }
 
         # keep last state
-        #BOTVAC_ReadingsBulkUpdateIfChanged( $hash, "state", "Error" );
+        #readingsBulkUpdateIfChanged( $hash, "state", "Error" );
     }
 
     # data received
     elsif ($data) {
       
         if ( !defined($cmd) ) {
-            Log3 $name, 4, "BOTVAC $name: RCV $service";
+            Log3($name, 4, "BOTVAC $name: RCV $service");
         } else {
-            Log3 $name, 4, "BOTVAC $name: RCV $service/$cmd";
+            Log3($name, 4, "BOTVAC $name: RCV $service/$cmd");
         }
         my $msg = "BOTVAC $name: RCV successors";
         my @succ_item;
@@ -753,24 +783,24 @@ sub BOTVAC_ReceiveCommand($$$) {
           $msg .= " $i: ";
           $msg .= join(",", map { defined($_) ? $_ : '' } @succ_item);
         }
-        Log3 $name, 4, $msg;
+        Log3($name, 4, $msg);
 
         if ( $data ne "" ) {
             if ( $service eq "loadmap" ) {
                 # use $data later
             } elsif ( $data =~ /^{/ || $data =~ /^\[/ ) {
                 if ( !defined($cmd) || $cmd eq "" ) {
-                    Log3 $name, 4, "BOTVAC $name: RES $service - $data";
+                    Log3($name, 4, "BOTVAC $name: RES $service - $data");
                 } else {
-                    Log3 $name, 4, "BOTVAC $name: RES $service/$cmd - $data";
+                    Log3($name, 4, "BOTVAC $name: RES $service/$cmd - $data");
                 }
                 $return = decode_json( encode_utf8($data) );
             } else {
-                Log3 $name, 5, "BOTVAC $name: RES ERROR $service\n" . $data;
+                Log3($name, 5, "BOTVAC $name: RES ERROR $service\n" . $data);
                 if ( !defined($cmd) || $cmd eq "" ) {
-                    Log3 $name, 5, "BOTVAC $name: RES ERROR $service\n$data";
+                    Log3($name, 5, "BOTVAC $name: RES ERROR $service\n$data");
                 } else {
-                    Log3 $name, 5, "BOTVAC $name: RES ERROR $service/$cmd\n$data";
+                    Log3($name, 5, "BOTVAC $name: RES ERROR $service/$cmd\n$data");
                 }
                 return undef;
             }
@@ -782,15 +812,15 @@ sub BOTVAC_ReceiveCommand($$$) {
             # getSchedule, enableSchedule, disableSchedule
             if ( ref($return->{data}) eq "HASH" ) {
               my $scheduleData = $return->{data};
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "scheduleType",    $scheduleData->{type});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "scheduleEnabled", $scheduleData->{enabled});
+              readingsBulkUpdateIfChanged($hash, "scheduleType",    $scheduleData->{type});
+              readingsBulkUpdateIfChanged($hash, "scheduleEnabled", $scheduleData->{enabled});
               if (ref($scheduleData->{events}) eq "ARRAY") {
                 my @events = @{$scheduleData->{events}};
                 for (my $i = 0; $i < @events; $i++) {
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."mode",      BOTVAC_GetModeText($events[$i]->{mode}))
+                  readingsBulkUpdateIfChanged($hash, "event".$i."mode",      GetModeText($events[$i]->{mode}))
                       if (defined($events[$i]->{mode}));
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."day",       BOTVAC_GetDayText($events[$i]->{day}));
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime});
+                  readingsBulkUpdateIfChanged($hash, "event".$i."day",       GetDayText($events[$i]->{day}));
+                  readingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime});
                 }
               }
             }
@@ -825,7 +855,7 @@ sub BOTVAC_ReceiveCommand($$$) {
                     $boundariesList .= "},";
                   }
                   $tmp = chop($boundariesList);  #remove last ","
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "floorplan_".$reqId."_boundaries", $boundariesList);
+                  readingsBulkUpdateIfChanged($hash, "floorplan_".$reqId."_boundaries", $boundariesList);
                 }
               }
           } 
@@ -839,66 +869,66 @@ sub BOTVAC_ReceiveCommand($$$) {
                        ($return->{state} == 1 or $return->{state} == 4) and   # Idle or Error
                        $return->{state} != ReadingsNum($name, "stateId", $return->{state})));
               
-              #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "version", $return->{version});
-              #BOTVAC_ReadingsBulkUpdateIfChanged($hash, "data", $return->{data});
-              BOTVAC_ReadingsBulkUpdateIfChanged($hash, "result", $return->{result});
+              #readingsBulkUpdateIfChanged($hash, "version", $return->{version});
+              #readingsBulkUpdateIfChanged($hash, "data", $return->{data});
+              readingsBulkUpdateIfChanged($hash, "result", $return->{result});
 
               if ($cmd eq "getRobotManualCleaningInfo") {
                 if ( ref($return->{data}) eq "HASH") {
                   my $data = $return->{data};
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanIpAddress", $data->{ip_address});
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanPort",      $data->{port});
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanSsid",      $data->{ssid});
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanToken",     $data->{token});
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanValidity",  BOTVAC_GetValidityEnd($data->{valid_for_seconds}));
+                  readingsBulkUpdateIfChanged($hash, "wlanIpAddress", $data->{ip_address});
+                  readingsBulkUpdateIfChanged($hash, "wlanPort",      $data->{port});
+                  readingsBulkUpdateIfChanged($hash, "wlanSsid",      $data->{ssid});
+                  readingsBulkUpdateIfChanged($hash, "wlanToken",     $data->{token});
+                  readingsBulkUpdateIfChanged($hash, "wlanValidity",  GetValidityEnd($data->{valid_for_seconds}));
                 } else {
-                  BOTVAC_ReadingsBulkUpdateIfChanged($hash, "wlanValidity",  "unavailable");
+                  readingsBulkUpdateIfChanged($hash, "wlanValidity",  "unavailable");
                 }
               }
               if ( ref($return->{cleaning}) eq "HASH" ) {
                 my $cleaning = $return->{cleaning};
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningCategory",       BOTVAC_GetCategoryText($cleaning->{category}));
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningMode",           BOTVAC_GetModeText($cleaning->{mode}));
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningModifier",       BOTVAC_GetModifierText($cleaning->{modifier}));
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningNavigationMode", BOTVAC_GetNavigationModeText($cleaning->{navigationMode}));
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningSpotWidth",      $cleaning->{spotWidth});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "cleaningSpotHeight",     $cleaning->{spotHeight});
+                readingsBulkUpdateIfChanged($hash, "cleaningCategory",       GetCategoryText($cleaning->{category}));
+                readingsBulkUpdateIfChanged($hash, "cleaningMode",           GetModeText($cleaning->{mode}));
+                readingsBulkUpdateIfChanged($hash, "cleaningModifier",       GetModifierText($cleaning->{modifier}));
+                readingsBulkUpdateIfChanged($hash, "cleaningNavigationMode", GetNavigationModeText($cleaning->{navigationMode}));
+                readingsBulkUpdateIfChanged($hash, "cleaningSpotWidth",      $cleaning->{spotWidth});
+                readingsBulkUpdateIfChanged($hash, "cleaningSpotHeight",     $cleaning->{spotHeight});
               }
               if ( ref($return->{details}) eq "HASH" ) {
                 my $details = $return->{details};
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "isCharging",        $details->{isCharging});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "isDocked",          $details->{isDocked});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "isScheduleEnabled", $details->{isScheduleEnabled});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "dockHasBeenSeen",   $details->{dockHasBeenSeen});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "batteryPercent",    $details->{charge});
+                readingsBulkUpdateIfChanged($hash, "isCharging",        $details->{isCharging});
+                readingsBulkUpdateIfChanged($hash, "isDocked",          $details->{isDocked});
+                readingsBulkUpdateIfChanged($hash, "isScheduleEnabled", $details->{isScheduleEnabled});
+                readingsBulkUpdateIfChanged($hash, "dockHasBeenSeen",   $details->{dockHasBeenSeen});
+                readingsBulkUpdateIfChanged($hash, "batteryPercent",    $details->{charge});
               }
               if ( ref($return->{availableCommands}) eq "HASH" ) {
                 my $availableCommands = $return->{availableCommands};
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".start",    $availableCommands->{start});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".stop",     $availableCommands->{stop});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".pause",    $availableCommands->{pause});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".resume",   $availableCommands->{resume});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".goToBase", $availableCommands->{goToBase});
+                readingsBulkUpdateIfChanged($hash, ".start",    $availableCommands->{start});
+                readingsBulkUpdateIfChanged($hash, ".stop",     $availableCommands->{stop});
+                readingsBulkUpdateIfChanged($hash, ".pause",    $availableCommands->{pause});
+                readingsBulkUpdateIfChanged($hash, ".resume",   $availableCommands->{resume});
+                readingsBulkUpdateIfChanged($hash, ".goToBase", $availableCommands->{goToBase});
               }
               if ( ref($return->{availableServices}) eq "HASH" ) {
-                BOTVAC_SetServices($hash, $return->{availableServices});
+                SetServices($hash, $return->{availableServices});
               }
               if ( ref($return->{meta}) eq "HASH" ) {
                 my $meta = $return->{meta};
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "model",    $meta->{modelName});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "firmware", $meta->{firmware});
+                readingsBulkUpdateIfChanged($hash, "model",    $meta->{modelName});
+                readingsBulkUpdateIfChanged($hash, "firmware", $meta->{firmware});
               }
               if (defined($return->{state})){ #State Response
                 my $error = ($return->{error}) ? $return->{error} : "";
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "error", $error);
+                readingsBulkUpdateIfChanged($hash, "error", $error);
                 my $alert = ($return->{alert}) ? $return->{alert} : "";
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "alert", $alert);
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "stateId", $return->{state});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "action", $return->{action});
-                BOTVAC_ReadingsBulkUpdateIfChanged(
+                readingsBulkUpdateIfChanged($hash, "alert", $alert);
+                readingsBulkUpdateIfChanged($hash, "stateId", $return->{state});
+                readingsBulkUpdateIfChanged($hash, "action", $return->{action});
+                readingsBulkUpdateIfChanged(
                   $hash,
                   "state",
-                  BOTVAC_BuildState($hash, $return->{state}, $return->{action}, $return->{error}));
+                  BuildState($hash, $return->{state}, $return->{action}, $return->{error}));
               }
             }
           }
@@ -907,7 +937,7 @@ sub BOTVAC_ReceiveCommand($$$) {
         # Sessions
         elsif ( $service eq "sessions" ) {
           if ( ref($return) eq "HASH" and defined($return->{access_token})) {
-            BOTVAC_ReadingsBulkUpdateIfChanged($hash, "accessToken", $return->{access_token});
+            readingsBulkUpdateIfChanged($hash, "accessToken", $return->{access_token});
           }
         }
         
@@ -920,16 +950,20 @@ sub BOTVAC_ReceiveCommand($$$) {
               for (my $i = 0; $i < @robots; $i++) {
                 my $r = {
                   "name"      => $robots[$i]->{name},
+                  "model"     => $robots[$i]->{model},
                   "serial"    => $robots[$i]->{serial},
                   "secretKey" => $robots[$i]->{secret_key},
                   "macAddr"   => $robots[$i]->{mac_address},
                   "nucleoUrl" => $robots[$i]->{nucleo_url}
                 };
+                $r->{recentFirmware} = $return->{recent_firmwares}{$r->{model}}{version}
+                  if ( ref($return->{recent_firmwares} ) eq "HASH" );
+
                 push(@robotList, $r);
               }
               $hash->{helper}{ROBOTS} = \@robotList;
 
-              BOTVAC_SetRobot($hash, ReadingsNum($name, "robot", 0));
+              SetRobot($hash, ReadingsNum($name, "robot", 0));
               
               push(@successor , ["robots", "maps"]);
             }
@@ -945,11 +979,11 @@ sub BOTVAC_ReceiveCommand($$$) {
                 my @maps = @{$return->{maps}};
                 # take first - newest
                 my $map = $maps[0];
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_date",   BOTVAC_GetTimeFromString($map->{generated_at}));
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
+                readingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
+                readingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
+                readingsBulkUpdateIfChanged($hash, "map_date",   GetTimeFromString($map->{generated_at}));
+                readingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
+                readingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
                 $loadMap = 1;
                 # getPersistentMaps
                 push(@successor , ["robots", "persistent_maps"]);
@@ -960,10 +994,10 @@ sub BOTVAC_ReceiveCommand($$$) {
             if ( ref($return) eq "ARRAY" ) {
               my @persistent_maps = @{$return};
               for (my $i = 0; $i < @persistent_maps; $i++) {
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "floorplan_".$i."_name", $persistent_maps[$i]->{name});
-                BOTVAC_ReadingsBulkUpdateIfChanged($hash, "floorplan_".$i."_id", $persistent_maps[$i]->{id});
+                readingsBulkUpdateIfChanged($hash, "floorplan_".$i."_name", $persistent_maps[$i]->{name});
+                readingsBulkUpdateIfChanged($hash, "floorplan_".$i."_id", $persistent_maps[$i]->{id});
                 # getMapBoundaries
-                if (BOTVAC_GetServiceVersion($hash, "maps") eq "advanced-1" or BOTVAC_GetServiceVersion($hash, "maps") eq "macro-1"){
+                if (GetServiceVersion($hash, "maps") eq "advanced-1" or GetServiceVersion($hash, "maps") eq "macro-1"){
                   my %params;
                   $params{"reqId"} = $i;
                   $params{"mapId"} = "\"".$persistent_maps[$i]->{id}."\"";
@@ -981,7 +1015,7 @@ sub BOTVAC_ReceiveCommand($$$) {
 
         # all other command results
         else {
-            Log3 $name, 2, "BOTVAC $name: ERROR: method to handle response of $service not implemented";
+            Log3($name, 2, "BOTVAC $name: ERROR: method to handle response of $service not implemented");
         }
 
     }
@@ -1011,14 +1045,14 @@ sub BOTVAC_ReceiveCommand($$$) {
         }
       }
 
-      BOTVAC_SendCommand($hash, $cmdService, $cmdCmd, $cmdOption, @successor)
+      SendCommand($hash, $cmdService, $cmdCmd, $cmdOption, @successor)
           if (($service ne $cmdService) or ($cmd ne $cmdCmd) or ($newReqId = "true"));
     }
 
     return;
 }
 
-sub BOTVAC_GetTimeFromString($) {
+sub GetTimeFromString($) {
   my ($timeStr) = @_;
   
   eval {
@@ -1030,22 +1064,24 @@ sub BOTVAC_GetTimeFromString($) {
   }
 }
 
-sub BOTVAC_SetRobot($$) {
+sub SetRobot($$) {
     my ( $hash, $robot ) = @_;
     my $name = $hash->{NAME};
 
-    Log3 $name, 4, "BOTVAC $name: set active robot $robot";
+    Log3($name, 4, "BOTVAC $name: set active robot $robot");
 
     my @robots = @{$hash->{helper}{ROBOTS}};
-    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "serial",    $robots[$robot]->{serial});
-    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "name",      $robots[$robot]->{name});
-    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "secretKey", $robots[$robot]->{secretKey});
-    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "macAddr",   $robots[$robot]->{macAddr});
-    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "nucleoUrl", $robots[$robot]->{nucleoUrl});
-    BOTVAC_ReadingsBulkUpdateIfChanged($hash, "robot",     $robot);
+    readingsBulkUpdateIfChanged($hash, "serial",    $robots[$robot]->{serial});
+    readingsBulkUpdateIfChanged($hash, "name",      $robots[$robot]->{name});
+    readingsBulkUpdateIfChanged($hash, "model",     $robots[$robot]->{model});
+    readingsBulkUpdateIfChanged($hash, "recentFirmware", $robots[$robot]->{recentFirmware});
+    readingsBulkUpdateIfChanged($hash, "secretKey", $robots[$robot]->{secretKey});
+    readingsBulkUpdateIfChanged($hash, "macAddr",   $robots[$robot]->{macAddr});
+    readingsBulkUpdateIfChanged($hash, "nucleoUrl", $robots[$robot]->{nucleoUrl});
+    readingsBulkUpdateIfChanged($hash, "robot",     $robot);
 }
 
-sub BOTVAC_GetCleaningParameter($$$) {
+sub GetCleaningParameter($$$) {
   my ($hash, $param, $default) = @_;
   my $name = $hash->{NAME};
 
@@ -1053,7 +1089,7 @@ sub BOTVAC_GetCleaningParameter($$$) {
   return ReadingsVal($name, $nextReading, ReadingsVal($name, $param, $default));
 }
 
-sub BOTVAC_GetServiceVersion($$) {
+sub GetServiceVersion($$) {
   my ($hash, $service) = @_;
   my $name = $hash->{NAME};
 
@@ -1064,7 +1100,7 @@ sub BOTVAC_GetServiceVersion($$) {
   return "";
 }
 
-sub BOTVAC_SetServices {
+sub SetServices {
   my ($hash, $services) = @_;
   my $name = $hash->{NAME};
   my $serviceList = join(", ", map { "$_:$services->{$_}" } keys %$services);;
@@ -1072,7 +1108,7 @@ sub BOTVAC_SetServices {
   $hash->{SERVICES} = $serviceList if (!defined($hash->{SERVICES}) or $hash->{SERVICES} ne $serviceList);
 }
 
-sub BOTVAC_StorePassword($$) {
+sub StorePassword($$) {
     my ($hash, $password) = @_;
     my $index = $hash->{TYPE}."_".$hash->{NAME}."_passwd";
     my $key = getUniqueId().$index;
@@ -1095,19 +1131,19 @@ sub BOTVAC_StorePassword($$) {
     return "password successfully saved";
 }
 
-sub BOTVAC_ReadPassword($) {
+sub ReadPassword($) {
     my ($hash) = @_;
     my $name = $hash->{NAME};
     my $index = $hash->{TYPE}."_".$hash->{NAME}."_passwd";
     my $key = getUniqueId().$index;
     my ($password, $err);
     
-    Log3 $name, 4, "BOTVAC $name: Read password from file";
+    Log3($name, 4, "BOTVAC $name: Read password from file");
     
     ($err, $password) = getKeyValue($index);
 
     if ( defined($err) ) {
-      Log3 $name, 3, "BOTVAC $name: unable to read password from file: $err";
+      Log3($name, 3, "BOTVAC $name: unable to read password from file: $err");
       return undef; 
     }
     
@@ -1124,12 +1160,12 @@ sub BOTVAC_ReadPassword($) {
       }
       return $dec_pwd;
     } else {
-      Log3 $name, 3, "BOTVAC $name: No password in file";
+      Log3($name, 3, "BOTVAC $name: No password in file");
       return undef;
     }
 }
 
-sub BOTVAC_CheckRegistration($$$$$) {
+sub CheckRegistration($$$$$) {
   my ( $hash, $service, $cmd, $option, @successor ) = @_;
   my $name = $hash->{NAME};
 
@@ -1144,10 +1180,10 @@ sub BOTVAC_CheckRegistration($$$$$) {
         $msg .= " $i: ";
         $msg .= join(",", map { defined($_) ? $_ : '' } @succ_item);
       }
-      Log3 $name, 4, "BOTVAC created".$msg;
+      Log3($name, 4, "BOTVAC created".$msg);
       
-    BOTVAC_SendCommand($hash, "sessions", undef, undef, @successor)   if (ReadingsVal($name, "accessToken", "") eq "");
-    BOTVAC_SendCommand($hash, "dashboard", undef, undef, @successor)  if (ReadingsVal($name, "accessToken", "") ne "");
+    SendCommand($hash, "sessions", undef, undef, @successor)   if (ReadingsVal($name, "accessToken", "") eq "");
+    SendCommand($hash, "dashboard", undef, undef, @successor)  if (ReadingsVal($name, "accessToken", "") ne "");
     
     return 1;
   }
@@ -1155,15 +1191,7 @@ sub BOTVAC_CheckRegistration($$$$$) {
   return;
 }
 
-sub BOTVAC_ReadingsBulkUpdateIfChanged($$$) {
-  my ($hash,$reading,$value) = @_;
-  my $name = $hash->{NAME};
-
-  readingsBulkUpdate($hash, $reading, $value)
-      if (defined($value) and ReadingsVal($name, $reading, "") ne $value);
-}
-
-sub BOTVAC_BuildState($$$$) {
+sub BuildState($$$$) {
     my ($hash,$state,$action,$error) = @_;
     my $states = {
         '0'       => "Invalid",
@@ -1176,11 +1204,11 @@ sub BOTVAC_BuildState($$$$) {
     if (!defined($state)) {
         return "Unknown";
     } elsif ($state == 2) {
-        return BOTVAC_GetActionText($action);
+        return GetActionText($action);
     } elsif ($state == 3) {
-        return "Paused: ".BOTVAC_GetActionText($action);
+        return "Paused: ".GetActionText($action);
     } elsif ($state == 4) {
-      return BOTVAC_GetErrorText($error);
+      return GetErrorText($error);
     } elsif (defined( $states->{$state})) {
         return $states->{$state};
     } else {
@@ -1188,7 +1216,7 @@ sub BOTVAC_BuildState($$$$) {
     }
 }
 
-sub BOTVAC_GetActionText($) {
+sub GetActionText($) {
     my ($action) = @_;
     my $actions = {
         '0'       => "Invalid",
@@ -1216,7 +1244,7 @@ sub BOTVAC_GetActionText($) {
     }
 }
 
-sub BOTVAC_GetErrorText($) {
+sub GetErrorText($) {
     my ($error) = @_;
     my $errors = {
         'ui_alert_invalid'                => 'Ok',
@@ -1238,7 +1266,7 @@ sub BOTVAC_GetErrorText($) {
     }
 }
 
-sub BOTVAC_GetDayText($) {
+sub GetDayText($) {
     my ($day) = @_;
     my $days = {
         '0'       => "Sunday",
@@ -1257,7 +1285,7 @@ sub BOTVAC_GetDayText($) {
     }
 }
 
-sub BOTVAC_GetCategoryText($) {
+sub GetCategoryText($) {
     my ($category) = @_;
     my $categories = {
         '1' => 'manual',
@@ -1273,7 +1301,7 @@ sub BOTVAC_GetCategoryText($) {
     }
 }
 
-sub BOTVAC_GetModeText($) {
+sub GetModeText($) {
     my ($mode) = @_;
     my $modes = {
         '1' => 'eco',
@@ -1287,7 +1315,7 @@ sub BOTVAC_GetModeText($) {
     }
 }
 
-sub BOTVAC_GetModifierText($) {
+sub GetModifierText($) {
     my ($modifier) = @_;
     my $modifiers = {
         '1' => 'normal',
@@ -1301,7 +1329,7 @@ sub BOTVAC_GetModifierText($) {
     }
 }
 
-sub BOTVAC_GetNavigationModeText($) {
+sub GetNavigationModeText($) {
     my ($navMode) = @_;
     my $navModes = {
         '1' => 'normal',
@@ -1316,7 +1344,7 @@ sub BOTVAC_GetNavigationModeText($) {
     }
 }
 
-sub BOTVAC_GetBeehiveHost($) {
+sub GetBeehiveHost($) {
     my ($vendor) = @_;
     my $vendors = {
         'neato'   => 'beehive.neatocloud.com',
@@ -1330,7 +1358,7 @@ sub BOTVAC_GetBeehiveHost($) {
     }
 }
 
-sub BOTVAC_GetNucleoHost($) {
+sub GetNucleoHost($) {
     my ($vendor) = @_;
     my $vendors = {
         'neato'   => 'nucleo.neatocloud.com',
@@ -1344,12 +1372,12 @@ sub BOTVAC_GetNucleoHost($) {
     }
 }
 
-sub BOTVAC_GetValidityEnd($) {
+sub GetValidityEnd($) {
     my ($validFor) = @_;
     return ($validFor =~ /\d+/ ? FmtDateTime(time() + $validFor) : $validFor);
 }
 
-sub BOTVAC_ShowMap($;$$) {
+sub ShowMap($;$$) {
     my ($name,$width,$height) = @_;
 
     my $img = '<img src="/fhem/BOTVAC/'.$name.'/map"';
@@ -1360,7 +1388,7 @@ sub BOTVAC_ShowMap($;$$) {
     return $img;
 }
 
-sub BOTVAC_GetMap() {
+sub GetMap() {
     my ($request) = @_;
     
     if ($request =~ /^\/BOTVAC\/(\w+)\/map/) {
@@ -1375,7 +1403,7 @@ sub BOTVAC_GetMap() {
     
 }
 
-#sub BOTVAC_GetCAKey($) {
+#sub GetCAKey($) {
 #  my ( $hash ) = @_;
 #  
 #  my $ca_key = q{-----BEGIN CERTIFICATE-----
@@ -1696,5 +1724,6 @@ sub BOTVAC_GetMap() {
 
 
 =end html_DE
+
 
 =cut
