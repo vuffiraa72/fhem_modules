@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 050 2018-12-09 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 051 2018-12-09 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.5.0
+# Version: 0.5.1
 #
 ##############################################################################
 
@@ -70,6 +70,7 @@ BEGIN {
         createUniqueId
         FmtDateTimeRFC1123
         getKeyValue
+        setKeyValue
         getUniqueId
         InternalTimer
         InternalVal
