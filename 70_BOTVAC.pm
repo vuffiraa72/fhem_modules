@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 051 2018-12-09 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 052 2018-12-13 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.5.1
+# Version: 0.5.2
 #
 ##############################################################################
 
@@ -626,6 +626,8 @@ sub SendCommand($$;$$@) {
         }
       }
 
+      $cmd .= "Events" if ($cmd eq "getSchedule" and GetServiceVersion($hash, "schedule") eq "basic-2");
+
       $data = "{\"reqId\":\"$reqId\",\"cmd\":\"$cmd\"";
       if ($cmd eq "startCleaning") {
         $data .= ",\"params\":{";
@@ -813,15 +815,17 @@ sub ReceiveCommand($$$) {
             # getSchedule, enableSchedule, disableSchedule
             if ( ref($return->{data}) eq "HASH" ) {
               my $scheduleData = $return->{data};
-              readingsBulkUpdateIfChanged($hash, "scheduleType",    $scheduleData->{type});
               readingsBulkUpdateIfChanged($hash, "scheduleEnabled", $scheduleData->{enabled});
+              readingsBulkUpdateIfChanged($hash, "scheduleType",    $scheduleData->{type})
+                  if (defined($scheduleData->{type}));
               if (ref($scheduleData->{events}) eq "ARRAY") {
                 my @events = @{$scheduleData->{events}};
                 for (my $i = 0; $i < @events; $i++) {
+                  readingsBulkUpdateIfChanged($hash, "event".$i."day",       GetDayText($events[$i]->{day}));
                   readingsBulkUpdateIfChanged($hash, "event".$i."mode",      GetModeText($events[$i]->{mode}))
                       if (defined($events[$i]->{mode}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."day",       GetDayText($events[$i]->{day}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime});
+                  readingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime})
+                      if (defined($events[$i]->{startTime}));
                 }
               }
             }
@@ -891,7 +895,8 @@ sub ReceiveCommand($$$) {
                 readingsBulkUpdateIfChanged($hash, "cleaningCategory",       GetCategoryText($cleaning->{category}));
                 readingsBulkUpdateIfChanged($hash, "cleaningMode",           GetModeText($cleaning->{mode}));
                 readingsBulkUpdateIfChanged($hash, "cleaningModifier",       GetModifierText($cleaning->{modifier}));
-                readingsBulkUpdateIfChanged($hash, "cleaningNavigationMode", GetNavigationModeText($cleaning->{navigationMode}));
+                readingsBulkUpdateIfChanged($hash, "cleaningNavigationMode", GetNavigationModeText($cleaning->{navigationMode}))
+                    if (defined($cleaning->{navigationMode}));
                 readingsBulkUpdateIfChanged($hash, "cleaningSpotWidth",      $cleaning->{spotWidth});
                 readingsBulkUpdateIfChanged($hash, "cleaningSpotHeight",     $cleaning->{spotHeight});
               }
