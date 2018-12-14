@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 052 2018-12-13 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 053 2018-12-14 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.5.2
+# Version: 0.5.3
 #
 ##############################################################################
 
@@ -212,12 +212,15 @@ sub Set($@) {
     $arg .= " ".$a[2] if (defined( $a[2] ));
     $arg .= " ".$a[3] if (defined( $a[3] ));
 
+    my $houseCleaningSrv = GetServiceVersion($hash, "houseCleaning");
+    my $spotCleaningSrv = GetServiceVersion($hash, "spotCleaning");
+
     my $usage = "Unknown argument " . $a[1] . ", choose one of";
 
     $usage .= " password";
     if ( ReadingsVal($name, ".start", "0") ) {
       $usage .= " startCleaning:";
-      $usage .= (GetServiceVersion($hash, "houseCleaning") eq "basic-3" ? "house,map" : "noArg");
+      $usage .= ($houseCleaningSrv eq "basic-3" or $houseCleaningSrv eq "basic-4" ? "house,map" : "noArg");
       $usage .= " startSpot:noArg";
     }
     $usage .= " stop:noArg"                if ( ReadingsVal($name, ".stop", "0") );
@@ -231,12 +234,10 @@ sub Set($@) {
     $usage .= " manualCleaningMode:noArg"  if ( GetServiceVersion($hash, "manualCleaning") ne "" );
     $usage .= " statusRequest:noArg schedule:on,off syncRobots:noArg";
     
-    my $houseCleaningSrv = GetServiceVersion($hash, "houseCleaning");
-    my $spotCleaningSrv = GetServiceVersion($hash, "spotCleaning");
     # house cleaning
     $usage .= " nextCleaningMode:eco,turbo" if ($houseCleaningSrv =~ /basic-\d/);
     $usage .= " nextCleaningNavigationMode:normal,extra#care" if ($houseCleaningSrv eq "minimal-2");
-    $usage .= " nextCleaningNavigationMode:normal,extra#care,deep" if ($houseCleaningSrv eq "basic-3");
+    $usage .= " nextCleaningNavigationMode:normal,extra#care,deep" if ($houseCleaningSrv eq "basic-3" or $houseCleaningSrv eq "basic-4");
     #spot cleaning
     $usage .= " nextCleaningModifier:normal,double" if ($spotCleaningSrv eq "basic-1" or $spotCleaningSrv eq "minimal-2");
     if ($spotCleaningSrv =~ /basic-\d/) {
@@ -256,7 +257,9 @@ sub Set($@) {
       }
     }
 
-    if (GetServiceVersion($hash, "maps") eq "advanced-1" or GetServiceVersion($hash, "maps") eq "macro-1") {
+    if (GetServiceVersion($hash, "maps") eq "advanced-1" or
+        GetServiceVersion($hash, "maps") eq "basic-2" or
+        GetServiceVersion($hash, "maps") eq "macro-1") {
       if (defined($hash->{helper}{BoundariesList})) {
         my @Boundaries = @{$hash->{helper}{BoundariesList}};
         my @names;
@@ -641,7 +644,7 @@ sub SendCommand($$;$$@) {
           $data .= "\"category\":2";
           $data .= ",\"navigationMode\":";
           $data .= (GetCleaningParameter($hash, "cleaningNavigationMode", "normal") eq "normal" ? "1" : "2");
-        } elsif ($version eq "basic-3") {
+        } elsif ($version eq "basic-3" or $version eq "basic-4") {
           $data .= "\"category\":";
           $data .= (defined($option) ? $option : "2");
           $data .= ",\"mode\":";
@@ -821,11 +824,42 @@ sub ReceiveCommand($$$) {
               if (ref($scheduleData->{events}) eq "ARRAY") {
                 my @events = @{$scheduleData->{events}};
                 for (my $i = 0; $i < @events; $i++) {
-                  readingsBulkUpdateIfChanged($hash, "event".$i."day",       GetDayText($events[$i]->{day}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."mode",      GetModeText($events[$i]->{mode}))
-                      if (defined($events[$i]->{mode}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime})
-                      if (defined($events[$i]->{startTime}));
+                  if ( GetServiceVersion($hash, "maps") =~ /.*-1/ ) {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."day",  GetDayText($events[$i]->{day}));
+                    readingsBulkUpdateIfChanged($hash, "event".$i."mode", GetModeText($events[$i]->{mode}))
+                        if (defined($events[$i]->{mode}));
+                    readingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime})
+                        if (defined($events[$i]->{startTime}));
+                  } else {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."type",     $events[$i]->{type});
+                    readingsBulkUpdateIfChanged($hash, "event".$i."start",    $events[$i]->{start});
+                    readingsBulkUpdateIfChanged($hash, "event".$i."duration", $events[$i]->{duration})
+                        if (defined($events[$i]->{startTime}));
+                    if ( ref($events[$i]->{recurring}) eq "HASH" ) {
+                      my $recurring = $events[$i]->{recurring};
+                      readingsBulkUpdateIfChanged($hash, "event".$i."end", $recurring->{end});
+                      if (ref($events[$i]->{days}) eq "ARRAY") {
+                        my @days = @{$events[$i]->{days}};
+                        my $days_str;
+                        for (my $j = 0; $j < @days; $j++) {
+                          $days_str .= "," if (defined($days_str));
+                          $days_str .= GetDayText($days[$j]->{day});
+                        }
+                        readingsBulkUpdateIfChanged($hash, "event".$i."days", $days_str);
+                      }
+                    }
+                    if ( ref($events[$i]->{cmd}) eq "HASH" ) {
+                      my $cmd = $events[$i]->{cmd};
+                      my $cmd_str = $cmd->{name};
+                      if ( ref($cmd->{params}) eq "HASH" ) {
+                        $cmd_str .= ":".GetCategoryText($cmd->{category});
+                        $cmd_str .= ",".GetModeText($cmd->{mode});
+                        $cmd_str .= ",".GetModifierText($cmd->{modifier});
+                        $cmd_str .= ",".GetNavigationModeText($cmd->{navigationMode}) if (defined($cmd->{navigationMode}));
+                      }
+                      readingsBulkUpdateIfChanged($hash, "event".$i."command", $cmd_str);
+                    }
+                  }
                 }
               }
             }
@@ -1003,7 +1037,9 @@ sub ReceiveCommand($$$) {
                 readingsBulkUpdateIfChanged($hash, "floorplan_".$i."_name", $persistent_maps[$i]->{name});
                 readingsBulkUpdateIfChanged($hash, "floorplan_".$i."_id", $persistent_maps[$i]->{id});
                 # getMapBoundaries
-                if (GetServiceVersion($hash, "maps") eq "advanced-1" or GetServiceVersion($hash, "maps") eq "macro-1"){
+                if (GetServiceVersion($hash, "maps") eq "advanced-1" or
+                    GetServiceVersion($hash, "maps") eq "basic-2" or
+                    GetServiceVersion($hash, "maps") eq "macro-1"){
                   my %params;
                   $params{"reqId"} = $i;
                   $params{"mapId"} = "\"".$persistent_maps[$i]->{id}."\"";
