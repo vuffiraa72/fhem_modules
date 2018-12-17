@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 054 2018-12-16 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 055 2018-12-17 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.5.4
+# Version: 0.5.5
 #
 ##############################################################################
 
@@ -70,6 +70,7 @@ BEGIN {
         createUniqueId
         FmtDateTime
         FmtDateTimeRFC1123
+        fhemTzOffset
         getKeyValue
         setKeyValue
         getUniqueId
@@ -822,29 +823,50 @@ sub ReceiveCommand($$$) {
               readingsBulkUpdateIfChanged($hash, "scheduleEnabled", $scheduleData->{enabled});
               readingsBulkUpdateIfChanged($hash, "scheduleType",    $scheduleData->{type})
                   if (defined($scheduleData->{type}));
+
+              my %currentEvents;
+              foreach ( keys %{ $hash->{READINGS} } ) {
+                $currentEvents{$_} = 1 if ( $_ =~ /^event\d.*/ );
+              }
+
               if (ref($scheduleData->{events}) eq "ARRAY") {
                 my @events = @{$scheduleData->{events}};
                 for (my $i = 0; $i < @events; $i++) {
-                  readingsBulkUpdateIfChanged($hash, "event".$i."day",       GetDayText($events[$i]->{day}))
-                      if (defined($events[$i]->{day}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."mode",      GetModeText($events[$i]->{mode}))
-                      if (defined($events[$i]->{mode}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime})
-                      if (defined($events[$i]->{startTime}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."type",      $events[$i]->{type})
-                      if (defined($events[$i]->{type}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."duration",  $events[$i]->{duration})
-                      if (defined($events[$i]->{duration}));
-                  readingsBulkUpdateIfChanged($hash, "event".$i."mapId",     $events[$i]->{mapId})
-                      if (defined($events[$i]->{mapId}));
+                  if (defined($events[$i]->{day})) {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."day",       GetDayText($events[$i]->{day}));
+                    delete $currentEvents{"event".$i."day"};
+                  }
+                  if (defined($events[$i]->{mode})) {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."mode",      GetModeText($events[$i]->{mode}));
+                    delete $currentEvents{"event".$i."mode"};
+                  }
+                  if (defined($events[$i]->{startTime})) {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."startTime", $events[$i]->{startTime});
+                    delete $currentEvents{"event".$i."startTime"};
+                  }
+                  if (defined($events[$i]->{type})) {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."type",      $events[$i]->{type});
+                    delete $currentEvents{"event".$i."type"};
+                  }
+                  if (defined($events[$i]->{duration})) {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."duration",  $events[$i]->{duration});
+                    delete $currentEvents{"event".$i."duration"};
+                  }
+                  if (defined($events[$i]->{mapId})) {
+                    readingsBulkUpdateIfChanged($hash, "event".$i."mapId",     $events[$i]->{mapId});
+                    delete $currentEvents{"event".$i."mapId"};
+                  }
                   if ( ref($events[$i]->{boundary}) eq "HASH" ) {
                     my $boundary = $events[$i]->{boundary};
                     readingsBulkUpdateIfChanged($hash, "event".$i."boundaryId",   $boundary->{id});
-                    readingsBulkUpdateIfChanged($hash, "event".$i."boundaryNAme", $boundary->{namr});
+                    readingsBulkUpdateIfChanged($hash, "event".$i."boundaryName", $boundary->{namr});
+                    delete $currentEvents{"event".$i."boundaryId"};
+                    delete $currentEvents{"event".$i."boundaryName"};
                   }
                   if ( ref($events[$i]->{recurring}) eq "HASH" ) {
                     my $recurring = $events[$i]->{recurring};
                     readingsBulkUpdateIfChanged($hash, "event".$i."end",     $recurring->{end});
+                    delete $currentEvents{"event".$i."end"};
                     if (ref($events[$i]->{days}) eq "ARRAY") {
                       my @days = @{$events[$i]->{days}};
                       my $days_str;
@@ -853,6 +875,7 @@ sub ReceiveCommand($$$) {
                         $days_str .= GetDayText($days[$j]->{day});
                       }
                       readingsBulkUpdateIfChanged($hash, "event".$i."days",  $days_str);
+                      delete $currentEvents{"event".$i."days"};
                     }
                   }
                   if ( ref($events[$i]->{cmd}) eq "HASH" ) {
@@ -865,8 +888,14 @@ sub ReceiveCommand($$$) {
                       $cmd_str .= ",".GetNavigationModeText($cmd->{navigationMode}) if (defined($cmd->{navigationMode}));
                     }
                     readingsBulkUpdateIfChanged($hash, "event".$i."command", $cmd_str);
+                    delete $currentEvents{"event".$i."command"};
                   }
                 }
+              }
+              
+              #remove outdated calendar information
+              foreach ( keys %currentEvents ) {
+                delete( $hash->{READINGS}{$_} );
               }
             }
           } 
@@ -1021,18 +1050,19 @@ sub ReceiveCommand($$$) {
           if ( $cmd eq "maps" ) {
             if ( ref($return) eq "HASH" ) {
               if ( ref($return->{maps} ) eq "ARRAY" ) {
-                my @mapList = ();
                 my @maps = @{$return->{maps}};
-                # take first - newest
-                my $map = $maps[0];
-                readingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
-                readingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
-                readingsBulkUpdateIfChanged($hash, "map_date",   GetTimeFromString($map->{generated_at}));
-                readingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
-                readingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
-                $loadMap = 1;
-                # getPersistentMaps
-                push(@successor , ["robots", "persistent_maps"]);
+                if (@maps) {
+                  # take first - newest
+                  my $map = $maps[0];
+                  readingsBulkUpdateIfChanged($hash, "map_status", $map->{status});
+                  readingsBulkUpdateIfChanged($hash, "map_id",     $map->{id});
+                  readingsBulkUpdateIfChanged($hash, "map_date",   GetTimeFromString($map->{generated_at}));
+                  readingsBulkUpdateIfChanged($hash, "map_area",   $map->{cleaned_area});
+                  readingsBulkUpdateIfChanged($hash, ".map_url",   $map->{url});
+                  $loadMap = 1;
+                  # getPersistentMaps
+                  push(@successor , ["robots", "persistent_maps"]);
+                }
               }
             }
           }
@@ -1102,7 +1132,7 @@ sub ReceiveCommand($$$) {
 
 sub GetTimeFromString($) {
   my ($timeStr) = @_;
-  
+
   eval {
     use Time::Local;
     if(defined($timeStr) and $timeStr =~ m/^(\d{4})-(\d{2})-(\d{2})T([0-2]\d):([0-5]\d):([0-5]\d)Z$/) {
@@ -1122,7 +1152,8 @@ sub SetRobot($$) {
     readingsBulkUpdateIfChanged($hash, "serial",    $robots[$robot]->{serial});
     readingsBulkUpdateIfChanged($hash, "name",      $robots[$robot]->{name});
     readingsBulkUpdateIfChanged($hash, "model",     $robots[$robot]->{model});
-    readingsBulkUpdateIfChanged($hash, "firmwareLatest", $robots[$robot]->{recentFirmware});
+    readingsBulkUpdateIfChanged($hash, "firmwareLatest", $robots[$robot]->{recentFirmware})
+        if (defined($robots[$robot]->{recentFirmware}));
     readingsBulkUpdateIfChanged($hash, "secretKey", $robots[$robot]->{secretKey});
     readingsBulkUpdateIfChanged($hash, "macAddr",   $robots[$robot]->{macAddr});
     readingsBulkUpdateIfChanged($hash, "nucleoUrl", $robots[$robot]->{nucleoUrl});
