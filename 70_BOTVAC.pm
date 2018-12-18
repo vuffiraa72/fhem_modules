@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 055 2018-12-17 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 056 2018-12-18 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.5.5
+# Version: 0.5.6
 #
 ##############################################################################
 
@@ -859,7 +859,7 @@ sub ReceiveCommand($$$) {
                   if ( ref($events[$i]->{boundary}) eq "HASH" ) {
                     my $boundary = $events[$i]->{boundary};
                     readingsBulkUpdateIfChanged($hash, "event".$i."boundaryId",   $boundary->{id});
-                    readingsBulkUpdateIfChanged($hash, "event".$i."boundaryName", $boundary->{namr});
+                    readingsBulkUpdateIfChanged($hash, "event".$i."boundaryName", $boundary->{name});
                     delete $currentEvents{"event".$i."boundaryId"};
                     delete $currentEvents{"event".$i."boundaryName"};
                   }
@@ -945,7 +945,7 @@ sub ReceiveCommand($$$) {
               
               #readingsBulkUpdateIfChanged($hash, "version", $return->{version});
               #readingsBulkUpdateIfChanged($hash, "data", $return->{data});
-              readingsBulkUpdateIfChanged($hash, "result", $return->{result});
+              readingsBulkUpdateIfChanged($hash, "result", $return->{result}) if (defined($return->{result}));
 
               if ($cmd eq "getRobotManualCleaningInfo") {
                 if ( ref($return->{data}) eq "HASH") {
