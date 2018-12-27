@@ -58,12 +58,6 @@
 	</li>
 <br>
 	<li>
-	<code> set &lt;name&gt; manualCleaningMode</code>
-	<br>
-	MISSING
-	</li>
-<br>
-	<li>
 	<code> set &lt;name&gt; nextCleaningMode</code>
 	<br>
 	MISSING
@@ -150,6 +144,7 @@
       "name":"Bad","color":"#E54B1C","enabled":true}
 	</li>
 <br>
+  <li>
 	<code> set &lt;name&gt; setRobot</code>
 	<br>
 	choose robot if more than one is registered at the used account
@@ -167,6 +162,17 @@
 	start spot-Cleaning from actual position. Depending on Model, there are additional Arguments available: eco/turbo ; normal/extraCare
 	</li>
 <br>
+  <li>
+  <code> set &lt;name&gt; startManual</code>
+  <br>
+  start Manual Cleaning. This cleaning mode opens a direct websocket connection to the robot.
+  Therefore robot and FHEM installation has to reside in the same LAN.
+  Even though an internet connection is necessary as the initialization is triggered by a remote call.
+  <br>
+  <em>Note:</em> If the robot does not receive any messages for 30 seconds it will exit Manual Cleaning,
+  but it will not close the websocket connection automaticaly.
+  </li>
+<br>
 	<li>
 	<code> set &lt;name&gt; statusRequest</code>
 	<br>
@@ -174,9 +180,9 @@
 	</li>
 <br>
 	<li>
-	<code> set &lt;name&gt; stop cleaning</code>
+	<code> set &lt;name&gt; stop</code>
 	<br>
-	stop cleaning
+	stop cleaning and in case of manual cleaning mode close also the websocket connection
 	</li>
 <br>
 	<li>
@@ -186,10 +192,37 @@
 	</li>
 <br>
 	<li>
-	<code> set &lt;name&gt; stopCleaning</code>
+	<code> set &lt;name&gt; wsCommand</code>
 	<br>
-	stopCleaning and stay where you are
+	Commands start or stop cleaning activities.
+  <ul>
+  <li><code>eco-on</code></li>
+  <li><code>eco-off</code></li>
+  <li><code>turbo-on</code></li>
+  <li><code>turbo-off</code></li>
+  <li><code>brush-on</code></li>
+  <li><code>brush-off</code></li>
+  <li><code>vacuum-on</code></li>
+  <li><code>vacuum-off</code></li>
+  </ul>
 	</li>
+<br>
+	<li>
+	<code> set &lt;name&gt; wsCombo</code>
+	<br>
+  Combos specify a behavior on the robot. They need to be sent with less than 1Hz frequency.
+  If the robot doesn't receive a combo with the specified frequency it will stop moving.
+  <ul>
+  <li><code>forward</code> issues a continuous forward motion.</li>
+  <li><code>back</code> issues a discontinuous backward motion in ~30cm intervals as a safety measure since the robot has no sensors at the back.</li>
+  <li><code>arc-left</code> issues a 450 turn counter-clockwise while going forward.</li>
+  <li><code>arc-right</code> issues a 450 turn clockwise while going forward.</li>
+  <li><code>pivot-left</code> issues a 900 turn counter-clockwise.</li>
+  <li><code>pivot-right</code> issues a 900 turn clockwise.</li>
+  <li><code>stop</code> issues an immediate stop.</li>
+  </ul>
+  Also, if the robot does not receive any messages for 30 seconds it will exit Manual Cleaning.
+  </li>
 <br>
 </ul>
 <a name="BOTVACattr"></a>

@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 056 2018-12-18 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 060 2018-12-27 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.5.6
+# Version: 0.6.0
 #
 ##############################################################################
 
@@ -41,13 +41,14 @@ sub BOTVAC_Initialize($) {
     $hash->{SetFn}    = "BOTVAC::Set";
     $hash->{UndefFn}  = "BOTVAC::Undefine";
     $hash->{DeleteFn} = "BOTVAC::Delete";
+    $hash->{ReadFn}   = "BOTVAC::wsRead";
+    $hash->{ReadyFn}  = "BOTVAC::wsReady";
     $hash->{AttrFn}   = "BOTVAC::Attr";
     $hash->{AttrList} = "disable:0,1 " .
                         "actionInterval " .
                         "boundaries:textField-long " .
                          $::readingFnAttributes;
 }
-
 
 package BOTVAC;
 
@@ -60,8 +61,12 @@ use GPUtils qw(:all);  # wird für den Import der FHEM Funktionen aus der fhem.p
 use Time::HiRes qw(gettimeofday);
 use JSON qw(decode_json);
 #use IO::Socket::SSL::Utils qw(PEM_string2cert);
-use Digest::SHA qw(hmac_sha256_hex);
+use Digest::SHA qw(hmac_sha256_hex sha1_hex);
 use Encode qw(encode_utf8);
+use MIME::Base64;
+
+require "DevIo.pm";
+require "HttpUtils.pm";
 
 ## Import der FHEM Funktionen
 BEGIN {
@@ -85,8 +90,18 @@ BEGIN {
         ReadingsVal
         RemoveInternalTimer
         Log3
+        trim
     ))
 };
+
+my %opcode = (    # Opcode interpretation of the ws "Payload data
+  'continuation'  => 0x00,
+  'text'      => 0x01,
+  'binary'    => 0x02,
+  'close'     => 0x08,
+  'ping'      => 0x09,
+  'pong'      => 0x0A
+);
 
 ###################################
 sub Define($$) {
@@ -233,18 +248,25 @@ sub Set($@) {
     $usage .= " reloadMaps:noArg"          if ( GetServiceVersion($hash, "maps") ne "" );
     $usage .= " dismissCurrentAlert:noArg" if ( ReadingsVal($name, "alert", "") ne "" );
     $usage .= " findMe:noArg"              if ( GetServiceVersion($hash, "findMe") eq "basic-1" );
-    $usage .= " manualCleaningMode:noArg"  if ( GetServiceVersion($hash, "manualCleaning") ne "" );
+    $usage .= " startManual:noArg"         if ( GetServiceVersion($hash, "manualCleaning") ne "" );
     $usage .= " statusRequest:noArg schedule:on,off syncRobots:noArg";
     
     # house cleaning
     $usage .= " nextCleaningMode:eco,turbo" if ($houseCleaningSrv =~ /basic-\d/);
     $usage .= " nextCleaningNavigationMode:normal,extra#care" if ($houseCleaningSrv eq "minimal-2");
     $usage .= " nextCleaningNavigationMode:normal,extra#care,deep" if ($houseCleaningSrv eq "basic-3" or $houseCleaningSrv eq "basic-4");
-    #spot cleaning
+
+    # spot cleaning
     $usage .= " nextCleaningModifier:normal,double" if ($spotCleaningSrv eq "basic-1" or $spotCleaningSrv eq "minimal-2");
     if ($spotCleaningSrv =~ /basic-\d/) {
       $usage .= " nextCleaningSpotWidth:100,200,300,400";
       $usage .= " nextCleaningSpotHeight:100,200,300,400";
+    }
+
+    # manual cleaning
+    if ($hash->{HELPER}{WEBSOCKETS}) {
+      $usage .= " wsCommand:brush-on,brush-off,eco-on,eco-off,turbo-on,turbo-off,vacuum-on,vacuum-off";
+      $usage .= " wsCombo:forward,back,stop,arc-left,arc-right,pivot-left,pivot-right";
     }
 
     my @robots;
@@ -292,6 +314,7 @@ sub Set($@) {
         my $option = "2";
         $option = "4" if (defined($a[2]) and $a[2] eq "map");
         SendCommand( $hash, "messages", "startCleaning", $option );
+        readingsSingleUpdate($hash, ".stop", "1", 0);
     }
 
     # spot cleaning
@@ -299,13 +322,26 @@ sub Set($@) {
         Log3($name, 2, "BOTVAC set $name $arg");
 
         SendCommand( $hash, "messages", "startSpot" );
+        readingsSingleUpdate($hash, ".stop", "1", 0);
+    }
+
+    # manual cleaning
+    elsif ( $a[1] eq "startManual" ) {
+        Log3($name, 2, "BOTVAC set $name $arg");
+
+        SendCommand( $hash, "messages", "getRobotManualCleaningInfo" );
+        readingsSingleUpdate($hash, ".stop", "1", 0);
     }
 
     # stop
     elsif ( $a[1] eq "stop" ) {
         Log3($name, 2, "BOTVAC set $name $arg");
 
-        SendCommand( $hash, "messages", "stopCleaning" );
+        if ($hash->{HELPER}{WEBSOCKETS}) {
+          wsClose($hash);
+        } else {
+          SendCommand( $hash, "messages", "stopCleaning" );
+        }
     }
 
     # pause
@@ -348,13 +384,6 @@ sub Set($@) {
         Log3($name, 2, "BOTVAC set $name $arg");
 
         SendCommand( $hash, "messages", "findMe" );
-    }
-
-    # manualCleaningMode
-    elsif ( $a[1] eq "manualCleaningMode" ) {
-        Log3($name, 2, "BOTVAC set $name $arg");
-
-        SendCommand( $hash, "messages", "getRobotManualCleaningInfo" );
     }
 
     # schedule
@@ -446,6 +475,16 @@ sub Set($@) {
         return "No argument given" if ( !defined( $a[2] ) );
 
         readingsSingleUpdate($hash, $a[1], $a[2], 0);
+    }
+    
+    # wsCommand || wsCommand
+    elsif ( $a[1] =~ /wsCombo|wsCommand/) {
+        Log3($name, 2, "BOTVAC set $name $arg");
+
+        return "No argument given" if ( !defined( $a[2] ) );
+
+        my $cmd = ($a[1] eq "wsCombo" ? "combo" : "command");
+        wsEncode($hash, "{ \"$cmd\": \"$a[2]\" }");
     }
     
     # password
@@ -796,6 +835,11 @@ sub ReceiveCommand($$$) {
         if ( $data ne "" ) {
             if ( $service eq "loadmap" ) {
                 # use $data later
+            } elsif ( $data =~ /^{"message":"Could not find robot_serial for specified vendor_name"}$/ ) {
+                # currently no data available
+                readingsBulkUpdateIfChanged($hash, "state", "Couldn't find robot");
+                readingsEndUpdate( $hash, 1 );
+                return;
             } elsif ( $data =~ /^{/ || $data =~ /^\[/ ) {
                 if ( !defined($cmd) || $cmd eq "" ) {
                     Log3($name, 4, "BOTVAC $name: RES $service - $data");
@@ -955,6 +999,7 @@ sub ReceiveCommand($$$) {
                   readingsBulkUpdateIfChanged($hash, "wlanSsid",      $data->{ssid});
                   readingsBulkUpdateIfChanged($hash, "wlanToken",     $data->{token});
                   readingsBulkUpdateIfChanged($hash, "wlanValidity",  GetValidityEnd($data->{valid_for_seconds}));
+                  wsOpen($hash, $data->{ip_address}, $data->{port});
                 } else {
                   readingsBulkUpdateIfChanged($hash, "wlanValidity",  "unavailable");
                 }
@@ -980,10 +1025,11 @@ sub ReceiveCommand($$$) {
               if ( ref($return->{availableCommands}) eq "HASH" ) {
                 my $availableCommands = $return->{availableCommands};
                 readingsBulkUpdateIfChanged($hash, ".start",    $availableCommands->{start});
-                readingsBulkUpdateIfChanged($hash, ".stop",     $availableCommands->{stop});
                 readingsBulkUpdateIfChanged($hash, ".pause",    $availableCommands->{pause});
                 readingsBulkUpdateIfChanged($hash, ".resume",   $availableCommands->{resume});
                 readingsBulkUpdateIfChanged($hash, ".goToBase", $availableCommands->{goToBase});
+                readingsBulkUpdateIfChanged($hash, ".stop",     $availableCommands->{stop})
+                    unless ($cmd =~ /start.*/ or $cmd eq "getRobotManualCleaningInfo");
               }
               if ( ref($return->{availableServices}) eq "HASH" ) {
                 SetServices($hash, $return->{availableServices});
@@ -1482,76 +1528,263 @@ sub GetMap() {
     
 }
 
-#sub GetCAKey($) {
-#  my ( $hash ) = @_;
-#  
-#  my $ca_key = q{-----BEGIN CERTIFICATE-----
-#MIIE3DCCA8SgAwIBAgIJALHphD11lrmHMA0GCSqGSIb3DQEBBQUAMIGkMQswCQYD
-#VQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNVBAcTBk5ld2FyazEbMBkGA1UEChMS
-#TmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQLEw5DbG91ZCBTZXJ2aWNlczEZMBcG
-#A1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQGCSqGSIb3DQEJARYXY2xvdWRAbmVh
-#dG9yb2JvdGljcy5jb20wHhcNMTUwNDIxMTA1OTA4WhcNNDUwNDEzMTA1OTA4WjCB
-#pDELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAkNBMQ8wDQYDVQQHEwZOZXdhcmsxGzAZ
-#BgNVBAoTEk5lYXRvIFJvYm90aWNzIEluYzEXMBUGA1UECxMOQ2xvdWQgU2Vydmlj
-#ZXMxGTAXBgNVBAMUECoubmVhdG9jbG91ZC5jb20xJjAkBgkqhkiG9w0BCQEWF2Ns
-#b3VkQG5lYXRvcm9ib3RpY3MuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB
-#CgKCAQEAur0WFcJ2YvnL3dtXJFv3lfCQtELLHVcux88tH7HN/FTeUvCqdleDNv4S
-#mXWgxVOdUUuhV885wppYyXNzDDrwCyjPmYj0m1EZ4FqTCcjFmk+xdEJsPsKPgRt5
-#QqaO0CA/T7dcIhT/PtQnJtcjn6E6vt2JLhsLz9OazadwjvdkejmfrOL643FGxsIP
-#8hu3+JINcfxnmff85zshe0yQH5yIYkmQGUPQz061T6mMzFrED/hx9zDpiB1mfkUm
-#uG3rBVcZWtrdyMvqB9LB1vqKgcCRANVg5S0GKpySudFlHOZjekXwBsZ+E6tW53qx
-#hvlgmlxX80aybYC5hQaNSQBaV9N4lwIDAQABo4IBDTCCAQkwHQYDVR0OBBYEFM3g
-#l7v7HP6zQgF90eHIl9coH6jhMIHZBgNVHSMEgdEwgc6AFM3gl7v7HP6zQgF90eHI
-#l9coH6jhoYGqpIGnMIGkMQswCQYDVQQGEwJVUzELMAkGA1UECBMCQ0ExDzANBgNV
-#BAcTBk5ld2FyazEbMBkGA1UEChMSTmVhdG8gUm9ib3RpY3MgSW5jMRcwFQYDVQQL
-#Ew5DbG91ZCBTZXJ2aWNlczEZMBcGA1UEAxQQKi5uZWF0b2Nsb3VkLmNvbTEmMCQG
-#CSqGSIb3DQEJARYXY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQCx6YQ9dZa5hzAM
-#BgNVHRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQB93p+MUmKH+MQI3pEVvPUW
-#y+VDB5qt1spE5J0awVwUzhQ7QXkEqgFfOk0kzufvxdha9wz+05E1glQ8l5CzlATu
-#kA7V5OsygYB+TgqjvhfFHkSI6TJ8OlKcAJuZ2yQE8s2+LVo92NLwpooZLA6BCahn
-#fX+rzmo6b4ylhyX98Tm3upINNH3whV355PJFgk74fw9N7U6cFlBrqXXssKOse2D2
-#xY65IK7OQxSq5K5OPFLwN3h/eURo5kwl7jhpJhJbFL4I46OkpgqWHxQEqSxQnS0d
-#AC62ApwWkm42i0/DGODms2tnGL/DaCiTkgEE+8EEF9kfvQDtMoUDNvIkl7Vvm914
-#-----END CERTIFICATE-----};
-#
-#  my $ca_key_vorwerk = q{-----BEGIN CERTIFICATE-----
-#MIIFCTCCA/GgAwIBAgIJAMOv+HZbfpj5MA0GCSqGSIb3DQEBBQUAMIGzMQswCQYD
-#VQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UEBxMJ
-#V3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQLEwVD
-#bG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEWH3Zv
-#cndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb20wHhcNMTUwNjMwMDkzMzM0WhcN
-#NDUwNjIyMDkzMzM0WjCBszELMAkGA1UEBhMCREUxHDAaBgNVBAgTE05vcmRyaGVp
-#bi1XZXN0ZmFsZW4xEjAQBgNVBAcTCVd1cHBlcnRhbDEZMBcGA1UEChQQVm9yd2Vy
-#ayAmIENvLiBLRzEOMAwGA1UECxMFQ2xvdWQxFzAVBgNVBAMUDioua3NlY29zeXMu
-#Y29tMS4wLAYJKoZIhvcNAQkBFh92b3J3ZXJrLWNsb3VkQG5lYXRvcm9ib3RpY3Mu
-#Y29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7gtMukRfXrkNB5/C
-#kSyRYWC7Na8QA7ryRUY1pk/NiuehHCG5DfLUNrtBauJPTSrLIrEQGo+E07WYDUmg
-#7vTeIwUgUrp1EAPe/2ebL8/z+U74o46vVo4r7x2ANd1CP7nUqcwXaPVOCwvZmWT0
-#5sdpOkeUbjqeaIGKATEfFYp0/58xaQwLiVh3ujd9CfsB+7ttH6H4NF9iU0xZuqO4
-#A5pQVrUEme+wwj3XrSLDpQehvjNG9nsA1urmdaPXSMHUSvCdasuxCHVmzyrP8+78
-#Luum6lGKxxfW/uC2zXXTlyVtNUkJJji+JGIkZ+wY9OXflW213zeDIHdAhbvPxJT0
-#CnQJawIDAQABo4IBHDCCARgwHQYDVR0OBBYEFNO5y/NI8+UR3GhGZ7ru6EMO+soU
-#MIHoBgNVHSMEgeAwgd2AFNO5y/NI8+UR3GhGZ7ru6EMO+soUoYG5pIG2MIGzMQsw
-#CQYDVQQGEwJERTEcMBoGA1UECBMTTm9yZHJoZWluLVdlc3RmYWxlbjESMBAGA1UE
-#BxMJV3VwcGVydGFsMRkwFwYDVQQKFBBWb3J3ZXJrICYgQ28uIEtHMQ4wDAYDVQQL
-#EwVDbG91ZDEXMBUGA1UEAxQOKi5rc2Vjb3N5cy5jb20xLjAsBgkqhkiG9w0BCQEW
-#H3ZvcndlcmstY2xvdWRAbmVhdG9yb2JvdGljcy5jb22CCQDDr/h2W36Y+TAMBgNV
-#HRMEBTADAQH/MA0GCSqGSIb3DQEBBQUAA4IBAQCgcAC1QbiITOdesQcoEzSCULXE
-#3DzOg3Cs6sSBMc8uZ+LRRaJNEvzR6QVA9l1poKY0yQQ7U32xFBadxXGFk5YZlMr+
-#MkFzcQxywTKuGDCkOqf8M6NtZjmH3DNAP9bBHhMb80IVwkZhOM7F5nSbZkDxOANo
-#O8KtJgpH5rQWGh3FH0SaV0VCjIBK6fLuGZmGvrN06T4bl08QBa2iaodNBQh7IvCG
-#eXkUm1eYWDZ4Kzzi7rDgHYHOBlTlDoxfb3ravORZqr0+HYzOP90QbVYtO3a2nyoZ
-#L+zBelsUcVFQYsM2oiY6AvCCPQLAYF9X9r9yLBPteLrWZUGjcuzmWe0QEhE+
-#-----END CERTIFICATE-----
-#    
-#  };
-#
-#  if ($hash->{helper}{VENDOR} eq "vorwerk") {
-#    return PEM_string2cert($ca_key_vorwerk);
-#  } else {
-#    return PEM_string2cert($ca_key);
-#  }
-#}
+#######################################
+#       Websocket Functions
+#######################################
+sub wsOpen($$$) {
+    my ($hash,$ip_address,$port) = @_;
+    my $name = $hash->{NAME};
+
+    Log3($name, 4, "BOTVAC(ws) $name: $name: Establishing socket connection");
+    $hash->{DeviceName} = join(':', $ip_address, $port);
+    ::DevIo_CloseDev($hash) if(::DevIo_IsOpen($hash)); 
+    ::DevIo_OpenDev($hash, 0, "BOTVAC::wsHandshake"); 
+}
+
+sub wsClose($) {
+    my $hash    = shift;
+    my $normal_closure =  pack("H*", "03e8");  #code 1000
+
+    wsEncode($hash, $normal_closure, "close");
+    delete $hash->{HELPER}{WEBSOCKETS};
+    delete $hash->{HELPER}{wsKey};
+    ::DevIo_CloseDev($hash);
+}
+
+sub wsHandshake($) {
+    my $hash    = shift;
+    my $name    = $hash->{NAME};
+    my $host    = ReadingsVal($name, "wlanIpAddress", "");
+    my $port    = ReadingsVal($name, "wlanPort", "");
+    my $path    = "/drive";
+    my $wsKey   = encode_base64(gettimeofday(), '');
+    my $serial  = ReadingsVal($name, "serial", "");
+    my $now     = time();
+    my $date    = FmtDateTimeRFC1123($now);
+    my $message = lc($serial) . "\n" . $date . "\n";
+    my $hmac    = hmac_sha256_hex($message, ReadingsVal($name, "secretKey", ""));
+    
+    my $wsHandshakeCmd = "GET $path HTTP/1.1\r\n";
+    $wsHandshakeCmd   .= "Host: $host:$port\r\n";
+    $wsHandshakeCmd   .= "Sec-WebSocket-Key: $wsKey\r\n";
+    $wsHandshakeCmd   .= "Sec-WebSocket-Version: 13\r\n";
+    $wsHandshakeCmd   .= "Upgrade: websocket\r\n";
+    $wsHandshakeCmd   .= "Origin: ws://$host:$port$path\r\n";
+    $wsHandshakeCmd   .= "Date: $date\r\n";
+    $wsHandshakeCmd   .= "Authorization: NEATOAPP $hmac\r\n";
+    $wsHandshakeCmd   .= "Connection: Upgrade\r\n";
+    $wsHandshakeCmd   .= "\r\n";          
+    
+    Log3($name, 4, "BOTVAC(ws) $name: Starting Websocket Handshake");
+    wsWrite($hash,$wsHandshakeCmd);
+    
+    $hash->{HELPER}{wsKey}  = $wsKey;
+    
+    return undef;
+}
+
+sub wsCheckHandshake($$) {
+    my ($hash,$response) = @_;
+    my $name = $hash->{NAME};
+
+    # header in Hash wandeln
+    my %header = ();
+    foreach my $line (split("\r\n", $response)) {
+      my ($key,$value) = split( ": ", $line );
+      next if( !$value );
+      $value =~ s/^ //;
+      Log3($name, 4, "BOTVAC(ws) $name: headertohash |$key|$value|");
+      $header{lc($key)} = $value;
+    }
+
+    # check handshake
+    if( defined($header{'sec-websocket-accept'})) {
+      my $keyAccept   = $header{'sec-websocket-accept'};
+      Log3($name, 5, "BOTVAC(ws) $name: keyAccept: $keyAccept");
+      my $wsKey = $hash->{HELPER}{wsKey};
+      my $expectedResponse = trim(encode_base64(pack('H*', sha1_hex(trim($wsKey)."258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))));
+      if ($keyAccept eq $expectedResponse) {
+        Log3($name, 4, "BOTVAC(ws) $name: Successful WS connection to $hash->{DeviceName}");
+        readingsSingleUpdate($hash,'state','ws_connected',1);
+        $hash->{HELPER}{WEBSOCKETS} = '1';
+      } else {
+        wsClose($hash);
+        Log3($name, 3, "BOTVAC(ws) $name: ERROR: Unsucessfull WS connection to $hash->{DeviceName}");
+        readingsSingleUpdate($hash,'state','ws_handshake-error',1);
+      }
+    }
+    return undef;
+}
+
+sub wsWrite($@) {
+    my ($hash,$string)  = @_;
+    my $name = $hash->{NAME};
+    
+    Log3($name, 4, "BOTVAC(ws) $name: WriteFn called:\n$string");
+    ::DevIo_SimpleWrite($hash, $string, 0);
+
+    return undef;
+}
+
+sub wsRead($) {
+    my $hash = shift;
+    my $name = $hash->{NAME};
+    my $buf;
+
+    Log3($name, 5, "ReadFn started");
+    $buf = ::DevIo_SimpleRead($hash);
+
+    return Log3($name, 3, "BOTVAC(ws) $name: no data received") unless( defined $buf);
+
+    if ($hash->{HELPER}{WEBSOCKETS}) {
+      Log3($name, 4, "BOTVAC(ws) $name: received data, start response processing:\n".sprintf("%v02X", $buf));
+      wsDecode($hash,$buf);
+    } elsif( $buf =~ /HTTP\/1.1 101 Switching Protocols/ ) {
+      Log3($name, 4, "BOTVAC(ws) $name: received HTTP data string, start response processing:\n$buf");
+      BOTVAC::wsCheckHandshake($hash,$buf);
+    } else {
+      Log3($name, 1, "BOTVAC(ws) $name: corrupted data found:\n$buf");
+    }
+}
+
+sub wsCallback(@) {
+    my ($param, $err, $data) = @_;
+    my $hash = $param->{hash};
+    my $name = $hash->{NAME};
+       
+        if($err){
+        Log3($name, 3, "received callback with error:\n$err");
+        } elsif($data){
+                Log3($name, 5, "received callback with:\n$data");
+             my $parser = $param->{parser};
+        &$parser($hash, $data);
+                asyncOutput($hash->{HELPER}{CLCONF}, $data) if $hash->{HELPER}{CLCONF};
+                delete $hash->{HELPER}{CLCONF};
+        } else {
+        Log3($name, 2, "received callback without Data and Error String!!!");
+    }
+   return undef;
+}
+
+sub wsReady($) {
+    my ($hash) = @_;
+    return ::DevIo_OpenDev($hash, 1, "BOTVAC::wsHandshake") if ( $hash->{STATE} eq "disconnected" );
+}
+
+# 0                   1                   2                   3
+# 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+# +-+-+-+-+-------+-+-------------+-------------------------------+
+# |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+# |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+# |N|V|V|V|       |S|             |   (if payload len==126/127)   |
+# | |1|2|3|       |K|             |                               |
+# +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+# |     Extended payload length continued, if payload len == 127  |
+# + - - - - - - - - - - - - - - - +-------------------------------+
+# |                               |Masking-key, if MASK set to 1  |
+# +-------------------------------+-------------------------------+
+##  | Masking-key (continued)       |          Payload Data         |
+# +-------------------------------- - - - - - - - - - - - - - - - +
+# :                     Payload Data continued ...                :
+# + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+# |                     Payload Data continued ...                |
+# +---------------------------------------------------------------+
+# https://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-17
+sub wsEncode($$;$$) {
+    my ($hash, $payload, $type, $masked) = @_;
+    my $name = $hash->{NAME};
+    $type //= "text";
+    $masked //= 1;    # Mask   If set to 1, a masking key is present in masking-key. 1 for all frames sent from client to server
+    my $RSV = 0;
+    my $FIN = 1;    # FIN    Indicates that this is the final fragment in a message. The first fragment MAY also be the final fragment.
+    my $MAX_PAYLOAD_SIZE = 65536;
+    my $wsString ='';
+    $wsString .= pack 'C', ($opcode{$type} | $RSV | ($FIN ? 128 : 0));
+    my $len = length($payload);
+
+    Log3($name, 3, "BOTVAC(ws) $name: wsEncode Payload: " . $payload);
+    return "payload to big" if ($len > $MAX_PAYLOAD_SIZE);
+
+    if ($len <= 125) {
+        $len |= 0x80 if $masked;
+        $wsString .= pack 'C', $len;
+    } elsif ($len <= 0xffff) {
+        $wsString .= pack 'C', 126 + ($masked ? 128 : 0);
+        $wsString .= pack 'n', $len;
+    } else {
+        $wsString .= pack 'C', 127 + ($masked ? 128 : 0);
+        $wsString .= pack 'N', $len >> 32;
+        $wsString .= pack 'N', ($len & 0xffffffff);
+    }
+    if ($masked) { 
+        my $mask = pack 'N', int(rand(2**32));
+    $wsString .= $mask;
+    $wsString .= wsMasking($payload, $mask); 
+    } else {
+        $wsString .= $payload;
+    }
+
+    Log3($name, 3, "BOTVAC(ws) $name: String: " . unpack('H*',$wsString));
+    wsWrite($hash, $wsString);
+}
+
+sub wsPong($) {
+    my $hash = shift;
+    my $name = $hash->{NAME};
+    Log3($name, 3, "BOTVAC(ws) $name: wsPong");
+    wsEncode($hash, undef, "pong");
+}
+
+sub wsDecode($$) {
+    my ($hash,$wsString) = @_;
+    my $name = $hash->{NAME};
+  
+    Log3($name, 5, "BOTVAC(ws) $name: String:\n" . $wsString);
+  
+    while (length $wsString) {
+      my $FIN =    (ord(substr($wsString,0,1)) & 0b10000000) >> 7;
+      my $OPCODE = (ord(substr($wsString,0,1)) & 0b00001111);
+      my $masked = (ord(substr($wsString,1,1)) & 0b10000000) >> 7;
+      my $len =    (ord(substr($wsString,1,1)) & 0b01111111);
+      Log3($name, 4, "BOTVAC(ws) $name: wsDecode FIN:$FIN OPCODE:$OPCODE MASKED:$masked LEN:$len");
+
+      my $offset = 2;
+      if ($len == 126) {
+        $len = unpack 'n', substr($wsString,$offset,2);
+        $offset += 2;
+      } elsif ($len == 127) {
+        $len = unpack 'q', substr($wsString,$offset,8);
+        $offset += 8;
+      }
+      my $mask;
+      if($masked) {                     # Mask auslesen falls Masked Bit gesetzt
+        $mask = substr($wsString,$offset,4);
+        $offset += 4;
+      }
+      #String kürzer als Längenangabe -> Zwischenspeichern?
+      if (length($wsString) < $offset + $len) {
+        Log3($name, 3, "BOTVAC(ws) $name: wsDecode Incomplete:\n" . $wsString);
+        return;
+      }
+      my $payload = substr($wsString, $offset, $len);     # Daten aus String extrahieren
+      if ($masked) {                      # Daten demaskieren falls maskiert
+         $payload = Neuron_wsMasking($payload, $mask);
+      }
+      Log3($name, 5, "BOTVAC(ws) $name: wsDecode Payload:\n" . $payload);
+      $wsString = substr($wsString,$offset+$len);       # ausgewerteten Stringteil entfernen
+      if ($FIN) {
+        wsPong($hash) if ($OPCODE == $opcode{"ping"});
+      }
+    }
+}
+
+sub wsMasking($$) {
+    my ($payload, $mask) = @_;
+    $mask = $mask x (int(length($payload) / 4) + 1);
+    $mask = substr($mask, 0, length($payload));
+    $payload = $payload ^ $mask;
+    return $payload;
+}
 
 1;
 =pod
@@ -1611,12 +1844,6 @@ sub GetMap() {
   <code> set &lt;name&gt; dismissCurrentAlert</code>
   <br>
         reset an actual Warning (e.g. dustbin full)
-  </li>
-<br>
-  <li>
-  <code> set &lt;name&gt; manualCleaningMode</code>
-  <br>
-  MISSING
   </li>
 <br>
   <li>
@@ -1706,6 +1933,7 @@ sub GetMap() {
       "name":"Bad","color":"#E54B1C","enabled":true}
   </li>
 <br>
+  <li>
   <code> set &lt;name&gt; setRobot</code>
   <br>
   choose robot if more than one is registered at the used account
@@ -1724,15 +1952,26 @@ sub GetMap() {
   </li>
 <br>
   <li>
+  <code> set &lt;name&gt; startManual</code>
+  <br>
+  start Manual Cleaning. This cleaning mode opens a direct websocket connection to the robot.
+  Therefore robot and FHEM installation has to reside in the same LAN.
+  Even though an internet connection is necessary as the initialization is triggered by a remote call.
+  <br>
+  <em>Note:</em> If the robot does not receive any messages for 30 seconds it will exit Manual Cleaning,
+  but it will not close the websocket connection automaticaly.
+  </li>
+<br>
+  <li>
   <code> set &lt;name&gt; statusRequest</code>
   <br>
   pull update of all readings. necessary because NEATO/VORWERK does not send updates at their own.
   </li>
 <br>
   <li>
-  <code> set &lt;name&gt; stop cleaning</code>
+  <code> set &lt;name&gt; stop</code>
   <br>
-  stop cleaning
+  stop cleaning and in case of manual cleaning mode close also the websocket connection
   </li>
 <br>
   <li>
@@ -1742,9 +1981,36 @@ sub GetMap() {
   </li>
 <br>
   <li>
-  <code> set &lt;name&gt; stopCleaning</code>
+  <code> set &lt;name&gt; wsCommand</code>
   <br>
-  stopCleaning and stay where you are
+  Commands start or stop cleaning activities.
+  <ul>
+  <li><code>eco-on</code></li>
+  <li><code>eco-off</code></li>
+  <li><code>turbo-on</code></li>
+  <li><code>turbo-off</code></li>
+  <li><code>brush-on</code></li>
+  <li><code>brush-off</code></li>
+  <li><code>vacuum-on</code></li>
+  <li><code>vacuum-off</code></li>
+  </ul>
+  </li>
+<br>
+  <li>
+  <code> set &lt;name&gt; wsCombo</code>
+  <br>
+  Combos specify a behavior on the robot. They need to be sent with less than 1Hz frequency.
+  If the robot doesn't receive a combo with the specified frequency it will stop moving.
+  <ul>
+  <li><code>forward</code> issues a continuous forward motion.</li>
+  <li><code>back</code> issues a discontinuous backward motion in ~30cm intervals as a safety measure since the robot has no sensors at the back.</li>
+  <li><code>arc-left</code> issues a 450 turn counter-clockwise while going forward.</li>
+  <li><code>arc-right</code> issues a 450 turn clockwise while going forward.</li>
+  <li><code>pivot-left</code> issues a 900 turn counter-clockwise.</li>
+  <li><code>pivot-right</code> issues a 900 turn clockwise.</li>
+  <li><code>stop</code> issues an immediate stop.</li>
+  </ul>
+  Also, if the robot does not receive any messages for 30 seconds it will exit Manual Cleaning.
   </li>
 <br>
 </ul>
@@ -1803,6 +2069,5 @@ sub GetMap() {
 
 
 =end html_DE
-
 
 =cut
