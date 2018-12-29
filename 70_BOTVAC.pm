@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 060 2018-12-27 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 061 2018-12-29 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.6.0
+# Version: 0.6.1
 #
 ##############################################################################
 
@@ -96,11 +96,11 @@ BEGIN {
 
 my %opcode = (    # Opcode interpretation of the ws "Payload data
   'continuation'  => 0x00,
-  'text'      => 0x01,
-  'binary'    => 0x02,
-  'close'     => 0x08,
-  'ping'      => 0x09,
-  'pong'      => 0x0A
+  'text'          => 0x01,
+  'binary'        => 0x02,
+  'close'         => 0x08,
+  'ping'          => 0x09,
+  'pong'          => 0x0A
 );
 
 ###################################
@@ -164,8 +164,9 @@ sub Define($$) {
 #####################################
 sub GetStatus($;$) {
     my ( $hash, $update ) = @_;
-    my $name     = $hash->{NAME};
-    my $interval = $hash->{INTERVAL};
+    my $name      = $hash->{NAME};
+    my $interval  = $hash->{INTERVAL};
+    my @successor = ();
     
     Log3($name, 5, "BOTVAC $name: called function GetStatus()");
 
@@ -182,12 +183,13 @@ sub GetStatus($;$) {
       my @time = localtime();
       my $secs = ($time[2] * 3600) + ($time[1] * 60) + $time[0];
 
-      if ($secs <= $interval) {
-        # update once per day
-        SendCommand( $hash, "dashboard", undef, undef, (["messages", "getRobotState"], ["messages", "getSchedule"]) ); 
-      } else {
-        SendCommand( $hash, "messages", "getRobotState", undef, ["messages", "getSchedule"] );
-      }        
+      push(@successor, ["messages", "getSchedule"]);
+      push(@successor, ["messages", "getGeneralInfo"]) if (GetServiceVersion($hash, "generalInfo") =~ /.*-1/);
+
+      # update once per day
+      push(@successor, ["dashboard", undef]) if ($secs <= $interval);
+
+      SendCommand($hash, "messages", "getRobotState", undef, @successor);
     }
 
     return;
@@ -977,6 +979,19 @@ sub ReceiveCommand($$$) {
                 }
               }
           } 
+          elsif ( $cmd eq "getGeneralInfo" ) {
+            if ( ref($return->{data}) eq "HASH" ) {
+              my $generalInfo = $return->{data};
+              if ( ref($generalInfo->{battery}) eq "HASH" ) {
+                my $batteryInfo = $generalInfo->{battery};
+                readingsBulkUpdateIfChanged($hash, "batteryTimeToEmpty",         $batteryInfo->{timeToEmpty});
+                readingsBulkUpdateIfChanged($hash, "batteryTimeToFullCharge",    $batteryInfo->{timeToFullCharge});
+                readingsBulkUpdateIfChanged($hash, "batteryManufacturingDate",   $batteryInfo->{manufacturingDate});
+                readingsBulkUpdateIfChanged($hash, "batteryAuthorizationStatus", GetAuthStatusText($hash, $batteryInfo->{authorizationStatus}));
+                readingsBulkUpdateIfChanged($hash, "batteryVendor",              $batteryInfo->{vendor});
+              }
+            }
+          }
           else {
             # getRobotState, startCleaning, pauseCleaning, stopCleaning, resumeCleaning,
             # sendToBase, setMapBoundaries, getRobotManualCleaningInfo
@@ -1466,6 +1481,21 @@ sub GetNavigationModeText($) {
         return $navModes->{$navMode};
     } else {
         return $navMode;
+    }
+}
+
+sub GetAuthStatusText($) {
+    my ($authStatus) = @_;
+    my $authStatusHash = {
+        '0' => 'not supported',
+        '1' => 'genuine',
+        '2' => 'not genuine'
+    };
+
+    if (defined($authStatus) && defined($authStatusHash->{$authStatus})) {
+        return $authStatusHash->{$authStatus};
+    } else {
+        return $authStatus;
     }
 }
 
