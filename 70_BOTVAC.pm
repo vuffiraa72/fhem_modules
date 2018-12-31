@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 061 2018-12-29 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 062 2018-12-31 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.6.1
+# Version: 0.6.2
 #
 ##############################################################################
 
@@ -183,11 +183,11 @@ sub GetStatus($;$) {
       my @time = localtime();
       my $secs = ($time[2] * 3600) + ($time[1] * 60) + $time[0];
 
-      push(@successor, ["messages", "getSchedule"]);
-      push(@successor, ["messages", "getGeneralInfo"]) if (GetServiceVersion($hash, "generalInfo") =~ /.*-1/);
-
       # update once per day
       push(@successor, ["dashboard", undef]) if ($secs <= $interval);
+
+      push(@successor, ["messages", "getSchedule"]);
+      push(@successor, ["messages", "getGeneralInfo"]) if (GetServiceVersion($hash, "generalInfo") =~ /.*-1/);
 
       SendCommand($hash, "messages", "getRobotState", undef, @successor);
     }
@@ -421,14 +421,17 @@ sub Set($@) {
         Log3($name, 2, "BOTVAC set $name $arg");
 
         return "No argument given" if ( !defined( $a[2] ) );
-
-        my $robot = 0;
-        while($a[2] ne $robots[$robot]->{name} and $robot + 1 < @robots) {
-          $robot++;
+        if (@robots) {
+          my $robot = 0;
+          while($a[2] ne $robots[$robot]->{name} and $robot + 1 < @robots) {
+            $robot++;
+          }
+          readingsBeginUpdate($hash);
+          SetRobot($hash, $robot);
+          readingsEndUpdate( $hash, 1 );
+        } else {
+          Log3($name, 2, "BOTVAC Can't set robot, run 'syncRobots' before");
         }
-        readingsBeginUpdate($hash);
-        SetRobot($hash, $robot);
-        readingsEndUpdate( $hash, 1 );
     }
     
     # reloadMaps
@@ -986,8 +989,9 @@ sub ReceiveCommand($$$) {
                 my $batteryInfo = $generalInfo->{battery};
                 readingsBulkUpdateIfChanged($hash, "batteryTimeToEmpty",         $batteryInfo->{timeToEmpty});
                 readingsBulkUpdateIfChanged($hash, "batteryTimeToFullCharge",    $batteryInfo->{timeToFullCharge});
+                readingsBulkUpdateIfChanged($hash, "batteryTotalCharges",        $batteryInfo->{totalCharges});
                 readingsBulkUpdateIfChanged($hash, "batteryManufacturingDate",   $batteryInfo->{manufacturingDate});
-                readingsBulkUpdateIfChanged($hash, "batteryAuthorizationStatus", GetAuthStatusText($hash, $batteryInfo->{authorizationStatus}));
+                readingsBulkUpdateIfChanged($hash, "batteryAuthorizationStatus", GetAuthStatusText($batteryInfo->{authorizationStatus}));
                 readingsBulkUpdateIfChanged($hash, "batteryVendor",              $batteryInfo->{vendor});
               }
             }
