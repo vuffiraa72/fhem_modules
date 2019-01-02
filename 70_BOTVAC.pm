@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 062 2018-12-31 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 063 2018-01-02 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.6.2
+# Version: 0.6.3
 #
 ##############################################################################
 
@@ -59,7 +59,7 @@ use POSIX;
 use GPUtils qw(:all);  # wird für den Import der FHEM Funktionen aus der fhem.pl benötigt
 
 use Time::HiRes qw(gettimeofday);
-use JSON qw(decode_json);
+use JSON qw(decode_json encode_json);
 #use IO::Socket::SSL::Utils qw(PEM_string2cert);
 use Digest::SHA qw(hmac_sha256_hex sha1_hex);
 use Encode qw(encode_utf8);
