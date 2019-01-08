@@ -60,25 +60,33 @@
 	<li>
 	<code> set &lt;name&gt; nextCleaningMode</code>
 	<br>
-	MISSING
+	Depending on Model, there are Arguments available: eco/turbo
 	</li>
 <br>
 	<li>
 	<code> set &lt;name&gt; nextCleaningNavigationMode</code>
 	<br>
-	MISSING
+	 The navigation mode is used for the next house cleaning.
+	 Depending on Model, there are Arguments available: normal/extraCare/deep
+	</li>
+<br>
+	<li>
+	<code> set &lt;name&gt; nextCleaningNavigationModifier</code>
+	<br>
+	 The modifier is used for next spot cleaning.
+	 Depending on Model, there are Arguments available: normal/double
 	</li>
 <br>
 	<li>
 	<code> set &lt;name&gt; nextCleaningSpotHeight</code>
 	<br>
-	MISSING
+	Is defined as number between 100 - 400. The unit is cm.
 	</li>
 <br>
 	<li>
 	<code> set &lt;name&gt; nextCleaningSpotWidth</code>
 	<br>
-	MISSING
+	Is defined as number between 100 - 400. The unit is cm.
 	</li>
 <br>
 	<li>
@@ -124,12 +132,6 @@
 	</li>
 <br>
 	<li>
-	<code> set &lt;name&gt; setBoundaries</code>
-	<br>
-	set boundaries/nogo lines
-	</li>
-<br>
-	<li>
   <code> set &lt;name&gt; setBoundariesOnFloorplan_&lt;floor plan&gt; &lt;name|{JSON String}&gt;</code>
 	<br>
     Set boundaries/nogo lines in the corresponding floor plan.<br>
@@ -151,15 +153,20 @@
 	</li>
 <br>
 	<li>
-	<code> set &lt;name&gt; startCleaning</code>
+	<code> set &lt;name&gt; startCleaning ([house|map])</code>
 	<br>
-	start the Cleaning from the scratch. Depending on Model, there are additional Arguments available: eco/turbo ; normal/extraCare
+	start the Cleaning from the scratch.
+	If the robot supports boundaries/nogo lines, the additional parameter can be used as:
+	<ul>
+  <li><code>house</code> - cleaning without a persisted map</li>
+  <li><code>map</code> - cleaning with a persisted map</li>
+  </ul>
 	</li>
 <br>
 	<li>
 	<code> set &lt;name&gt; startSpot</code>
 	<br>
-	start spot-Cleaning from actual position. Depending on Model, there are additional Arguments available: eco/turbo ; normal/extraCare
+	start spot-Cleaning from actual position.
 	</li>
 <br>
   <li>
@@ -228,14 +235,6 @@
 <a name="BOTVACattr"></a>
 <b>Attributes</b>
 <ul>
-<br>
-
-
-	<li>
-	<code> myFirstAttr</code>
-	<br>
-	Explanation
-	</li>
 <br>
 	<li>
 	<code>actionInterval</code>

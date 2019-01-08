@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 063 2018-01-02 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 064 2018-01-08 12:34:56Z VuffiRaa$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.6.3
+# Version: 0.6.4
 #
 ##############################################################################
 
@@ -1016,10 +1016,11 @@ sub ReceiveCommand($$$) {
                   readingsBulkUpdateIfChanged($hash, "wlanIpAddress", $data->{ip_address});
                   readingsBulkUpdateIfChanged($hash, "wlanPort",      $data->{port});
                   readingsBulkUpdateIfChanged($hash, "wlanSsid",      $data->{ssid});
-                  readingsBulkUpdateIfChanged($hash, "wlanToken",     $data->{token});
-                  readingsBulkUpdateIfChanged($hash, "wlanValidity",  GetValidityEnd($data->{valid_for_seconds}));
+                  readingsBulkUpdateIfChanged($hash, "wlanToken",     $data->{token}) if (defined($data->{token}));
+                  readingsBulkUpdateIfChanged($hash, "wlanValidity",  GetValidityEnd($data->{valid_for_seconds}))
+                      if (defined($data->{valid_for_seconds}));
                   wsOpen($hash, $data->{ip_address}, $data->{port});
-                } else {
+                } elsif (ReadingsVal($name, "wlanValidity", "") ne "") {
                   readingsBulkUpdateIfChanged($hash, "wlanValidity",  "unavailable");
                 }
               }
@@ -1569,10 +1570,13 @@ sub wsOpen($$$) {
     my ($hash,$ip_address,$port) = @_;
     my $name = $hash->{NAME};
 
-    Log3($name, 4, "BOTVAC(ws) $name: $name: Establishing socket connection");
+    Log3($name, 4, "BOTVAC(ws) $name: Establishing socket connection");
     $hash->{DeviceName} = join(':', $ip_address, $port);
+
     ::DevIo_CloseDev($hash) if(::DevIo_IsOpen($hash)); 
-    ::DevIo_OpenDev($hash, 0, "BOTVAC::wsHandshake"); 
+
+    Log3($name, 2, "BOTVAC(ws) $name: Can't open websocket on ".$hash->{DeviceName})
+        unless(::DevIo_OpenDev($hash, 0, "BOTVAC::wsHandshake")); 
 }
 
 sub wsClose($) {
@@ -1883,25 +1887,33 @@ sub wsMasking($$) {
   <li>
   <code> set &lt;name&gt; nextCleaningMode</code>
   <br>
-  MISSING
+  Depending on Model, there are Arguments available: eco/turbo
   </li>
 <br>
   <li>
   <code> set &lt;name&gt; nextCleaningNavigationMode</code>
   <br>
-  MISSING
+   The navigation mode is used for the next house cleaning.
+   Depending on Model, there are Arguments available: normal/extraCare/deep
+  </li>
+<br>
+  <li>
+  <code> set &lt;name&gt; nextCleaningNavigationModifier</code>
+  <br>
+   The modifier is used for next spot cleaning.
+   Depending on Model, there are Arguments available: normal/double
   </li>
 <br>
   <li>
   <code> set &lt;name&gt; nextCleaningSpotHeight</code>
   <br>
-  MISSING
+  Is defined as number between 100 - 400. The unit is cm.
   </li>
 <br>
   <li>
   <code> set &lt;name&gt; nextCleaningSpotWidth</code>
   <br>
-  MISSING
+  Is defined as number between 100 - 400. The unit is cm.
   </li>
 <br>
   <li>
@@ -1947,12 +1959,6 @@ sub wsMasking($$) {
   </li>
 <br>
   <li>
-  <code> set &lt;name&gt; setBoundaries</code>
-  <br>
-  set boundaries/nogo lines
-  </li>
-<br>
-  <li>
   <code> set &lt;name&gt; setBoundariesOnFloorplan_&lt;floor plan&gt; &lt;name|{JSON String}&gt;</code>
   <br>
     Set boundaries/nogo lines in the corresponding floor plan.<br>
@@ -1974,15 +1980,20 @@ sub wsMasking($$) {
   </li>
 <br>
   <li>
-  <code> set &lt;name&gt; startCleaning</code>
+  <code> set &lt;name&gt; startCleaning ([house|map])</code>
   <br>
-  start the Cleaning from the scratch. Depending on Model, there are additional Arguments available: eco/turbo ; normal/extraCare
+  start the Cleaning from the scratch.
+  If the robot supports boundaries/nogo lines, the additional parameter can be used as:
+  <ul>
+  <li><code>house</code> - cleaning without a persisted map</li>
+  <li><code>map</code> - cleaning with a persisted map</li>
+  </ul>
   </li>
 <br>
   <li>
   <code> set &lt;name&gt; startSpot</code>
   <br>
-  start spot-Cleaning from actual position. Depending on Model, there are additional Arguments available: eco/turbo ; normal/extraCare
+  start spot-Cleaning from actual position.
   </li>
 <br>
   <li>
@@ -2051,14 +2062,6 @@ sub wsMasking($$) {
 <a name="BOTVACattr"></a>
 <b>Attributes</b>
 <ul>
-<br>
-
-
-  <li>
-  <code> myFirstAttr</code>
-  <br>
-  Explanation
-  </li>
 <br>
   <li>
   <code>actionInterval</code>
