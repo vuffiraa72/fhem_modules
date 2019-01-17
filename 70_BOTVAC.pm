@@ -1,4 +1,4 @@
-# $Id: 70_BOTVAC.pm 064 2018-01-08 12:34:56Z VuffiRaa$
+# $Id: 70_BOTVAC.pm 065 2018-01-17 01:00:56Z JojoK88$
 ##############################################################################
 #
 #     70_BOTVAC.pm
@@ -23,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.6.4
+# Version: 0.6.5
 #
 ##############################################################################
 
@@ -239,7 +239,13 @@ sub Set($@) {
     $usage .= " password";
     if ( ReadingsVal($name, ".start", "0") ) {
       $usage .= " startCleaning:";
-      $usage .= ($houseCleaningSrv eq "basic-3" or $houseCleaningSrv eq "basic-4" ? "house,map" : "noArg");
+      if ($houseCleaningSrv eq "basic-4") {
+        $usage .= "house,map,zone";
+      } elsif ($houseCleaningSrv eq "basic-3") {
+        $usage .= "house,map";
+      } else {
+        $usage .= "noArg";
+      }
       $usage .= " startSpot:noArg";
     }
     $usage .= " stop:noArg"                if ( ReadingsVal($name, ".stop", "0") );
@@ -257,6 +263,7 @@ sub Set($@) {
     $usage .= " nextCleaningMode:eco,turbo" if ($houseCleaningSrv =~ /basic-\d/);
     $usage .= " nextCleaningNavigationMode:normal,extra#care" if ($houseCleaningSrv eq "minimal-2");
     $usage .= " nextCleaningNavigationMode:normal,extra#care,deep" if ($houseCleaningSrv eq "basic-3" or $houseCleaningSrv eq "basic-4");
+    $usage .= " nextCleaningZone" if ($houseCleaningSrv eq "basic-4");
 
     # spot cleaning
     $usage .= " nextCleaningModifier:normal,double" if ($spotCleaningSrv eq "basic-1" or $spotCleaningSrv eq "minimal-2");
@@ -313,8 +320,8 @@ sub Set($@) {
     if ( $a[1] eq "startCleaning" ) {
         Log3($name, 2, "BOTVAC set $name $arg");
 
-        my $option = "2";
-        $option = "4" if (defined($a[2]) and $a[2] eq "map");
+        my $option = "house";
+        $option = $a[2] if (defined($a[2]));
         SendCommand( $hash, "messages", "startCleaning", $option );
         readingsSingleUpdate($hash, ".stop", "1", 0);
     }
@@ -692,7 +699,7 @@ sub SendCommand($$;$$@) {
           $data .= (GetCleaningParameter($hash, "cleaningNavigationMode", "normal") eq "normal" ? "1" : "2");
         } elsif ($version eq "basic-3" or $version eq "basic-4") {
           $data .= "\"category\":";
-          $data .= (defined($option) ? $option : "2");
+          $data .= (($option eq "map" or $option eq "zone") ? "4" : "2");
           $data .= ",\"mode\":";
           my $cleanMode = GetCleaningParameter($hash, "cleaningMode", "eco");
           $data .= ($cleanMode eq "eco" ? "1" : "2");
@@ -704,6 +711,10 @@ sub SendCommand($$;$$@) {
             $data .= "2";
           } else {
             $data .= "1";
+          }
+          if ($version eq "basic-4" and $option eq "zone") {
+            my $zone = GetCleaningParameter($hash, "cleaningZone", "");
+            $data .= ",\"boundaryId\":\"".$zone."\"" if ($zone ne "");
           }
         }          
         $data .= "}";
@@ -956,29 +967,41 @@ sub ReceiveCommand($$$) {
                   my @boundaries = @{$boundariesData->{boundaries}};
                   my $tmp = "";
                   my $boundariesList = "";
+                  my $zonesList = "";
                   for (my $i = 0; $i < @boundaries; $i++) {
-                    $boundariesList .= "{\"type\":\"".$boundaries[$i]->{type}."\",";
+                    my $currentBoundary = "{";
+                    $currentBoundary .= "\"id\":\"".$boundaries[$i]->{id}."\"," if ($boundaries[$i]->{type} eq "polygon");
+					$currentBoundary .= "\"type\":\"".$boundaries[$i]->{type}."\",";
                     if (ref($boundaries[$i]->{vertices}) eq "ARRAY") {
                       my @vertices = @{$boundaries[$i]->{vertices}};
-                      $boundariesList .= "\"vertices\":[";
+                      $currentBoundary .= "\"vertices\":[";
                       for (my $e = 0; $e < @vertices; $e++) {
                         if (ref($vertices[$e]) eq "ARRAY") {
                           my @xy = @{$vertices[$e]};
-                          $boundariesList .= "[".$xy[0].",".$xy[1]."],";
+                          $currentBoundary .= "[".$xy[0].",".$xy[1]."],";
                         }
                       }
-                    $tmp = chop($boundariesList);  #remove last ","
-                    $boundariesList .= "],";
+                    $tmp = chop($currentBoundary);  #remove last ","
+                    $currentBoundary .= "],";
                     }
-                    $boundariesList .= "\"name\":\"".$boundaries[$i]->{name}."\",";
-                    $boundariesList .= "\"color\":\"".$boundaries[$i]->{color}."\",";
+                    $currentBoundary .= "\"name\":\"".$boundaries[$i]->{name}."\",";
+                    $currentBoundary .= "\"color\":\"".$boundaries[$i]->{color}."\",";
                     $tmp = $boundaries[$i]->{enabled} eq "1" ? "true" : "false";
-                    $boundariesList .= "\"enabled\":".$tmp.",";
-                    $tmp = chop($boundariesList);  #remove last ","
-                    $boundariesList .= "},";
+                    $currentBoundary .= "\"enabled\":".$tmp.",";
+                    $tmp = chop($currentBoundary);  #remove last ","
+                    $currentBoundary .= "},\n";
+					if ($boundaries[$i]->{type} eq "polygon") {
+					  $zonesList .= $currentBoundary;
+					} else {
+					  $boundariesList .= $currentBoundary;
+					}
                   }
-                  $tmp = chop($boundariesList);  #remove last ","
+                  $tmp = chomp($boundariesList);  #remove last "\n"
+				  $tmp = chomp($zonesList);  #remove last "\n"
+				  $tmp = chop($boundariesList);  #remove last ","
+				  $tmp = chop($zonesList);  #remove last ","
                   readingsBulkUpdateIfChanged($hash, "floorplan_".$reqId."_boundaries", $boundariesList);
+				  readingsBulkUpdateIfChanged($hash, "floorplan_".$reqId."_zones", $zonesList);
                 }
               }
           } 
@@ -1905,6 +1928,12 @@ sub wsMasking($$) {
   </li>
 <br>
   <li>
+  <code> set &lt;name&gt; nextCleaningZone</code>
+  <br>
+  Depending on Model, the ID of the zone that will be used for the next zone cleaning can be set.
+  </li>
+<br>
+  <li>
   <code> set &lt;name&gt; nextCleaningSpotHeight</code>
   <br>
   Is defined as number between 100 - 400. The unit is cm.
@@ -1980,13 +2009,14 @@ sub wsMasking($$) {
   </li>
 <br>
   <li>
-  <code> set &lt;name&gt; startCleaning ([house|map])</code>
+  <code> set &lt;name&gt; startCleaning ([house|map|zone])</code>
   <br>
   start the Cleaning from the scratch.
-  If the robot supports boundaries/nogo lines, the additional parameter can be used as:
+  If the robot supports boundaries/nogo lines/zones, the additional parameter can be used as:
   <ul>
   <li><code>house</code> - cleaning without a persisted map</li>
   <li><code>map</code> - cleaning with a persisted map</li>
+  <li><code>zone</code> - cleaning in a specific zone, set zone with nextCleaningZone</li> 
   </ul>
   </li>
 <br>
@@ -2089,6 +2119,7 @@ sub wsMasking($$) {
 =end html
 
 =begin html_DE
+
 <a name="BOTVAC"></a>
 
 <h3>BOTVAC</h3>

@@ -78,6 +78,12 @@
 	</li>
 <br>
 	<li>
+	<code> set &lt;name&gt; nextCleaningZone</code>
+	<br>
+	Depending on Model, the ID of the zone that will be used for the next zone cleaning can be set.
+	</li>
+<br>
+	<li>
 	<code> set &lt;name&gt; nextCleaningSpotHeight</code>
 	<br>
 	Is defined as number between 100 - 400. The unit is cm.
@@ -153,13 +159,14 @@
 	</li>
 <br>
 	<li>
-	<code> set &lt;name&gt; startCleaning ([house|map])</code>
+	<code> set &lt;name&gt; startCleaning ([house|map|zone])</code>
 	<br>
 	start the Cleaning from the scratch.
-	If the robot supports boundaries/nogo lines, the additional parameter can be used as:
+	If the robot supports boundaries/nogo lines/zones, the additional parameter can be used as:
 	<ul>
   <li><code>house</code> - cleaning without a persisted map</li>
   <li><code>map</code> - cleaning with a persisted map</li>
+  <li><code>zone</code> - cleaning in a specific zone, set zone with nextCleaningZone</li>
   </ul>
 	</li>
 <br>
