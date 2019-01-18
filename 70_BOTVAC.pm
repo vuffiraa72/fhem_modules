@@ -1,5 +1,4 @@
-# $WId: 70_BOTVAC.pm 065 2018-01-17 01:00:56Z JojoK88$
-##############################################################################
+# $Id: 70_BOTVAC.pm 065 2018-01-17 01:00:56Z JojoK88$
 #
 #     70_BOTVAC.pm
 #     An FHEM Perl module for controlling a Neato BotVacConnected.
@@ -2119,6 +2118,7 @@ sub wsMasking($$) {
 =end html
 
 =begin html_DE
+
 <a name="BOTVAC"></a>
 
 <h3>BOTVAC</h3>
