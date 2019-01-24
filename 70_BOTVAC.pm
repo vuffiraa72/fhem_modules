@@ -1,4 +1,5 @@
-# $Id: 70_BOTVAC.pm 065 2018-01-17 01:00:56Z JojoK88$
+# $Id: 70_BOTVAC.pm 066 2018-01-24 01:00:56Z JojoK88$
+##############################################################################
 #
 #     70_BOTVAC.pm
 #     An FHEM Perl module for controlling a Neato BotVacConnected.
@@ -22,7 +23,7 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-# Version: 0.6.5
+# Version: 0.6.6
 #
 ##############################################################################
 
@@ -1597,18 +1598,26 @@ sub wsOpen($$$) {
 
     ::DevIo_CloseDev($hash) if(::DevIo_IsOpen($hash)); 
 
-    Log3($name, 2, "BOTVAC(ws) $name: Can't open websocket on ".$hash->{DeviceName})
-        unless(::DevIo_OpenDev($hash, 0, "BOTVAC::wsHandshake")); 
+    if (::DevIo_OpenDev($hash, 0, "BOTVAC::wsHandshake")) {
+      Log3($name, 2, "BOTVAC(ws) $name: ERROR: Can't open websocket to $hash->{DeviceName}");
+      readingsSingleUpdate($hash,'result','ws_connect_error',1);
+      readingsSingleUpdate($hash,'result','ws_ko',1);
+    } else {
+      readingsSingleUpdate($hash,'result','ws_ok',1);
+    }
 }
 
 sub wsClose($) {
-    my $hash    = shift;
+    my $hash = shift;
+    my $name = $hash->{NAME};
     my $normal_closure =  pack("H*", "03e8");  #code 1000
+
+    Log3($name, 4, "BOTVAC(ws) $name: Closing socket connection");
 
     wsEncode($hash, $normal_closure, "close");
     delete $hash->{HELPER}{WEBSOCKETS};
     delete $hash->{HELPER}{wsKey};
-    ::DevIo_CloseDev($hash);
+    readingsSingleUpdate($hash,'state','ws_closed',1) if (::DevIo_CloseDev($hash))
 }
 
 sub wsHandshake($) {
@@ -2116,25 +2125,4 @@ sub wsMasking($$) {
 </ul>
 
 =end html
-
-=begin html_DE
-
-<a name="BOTVAC"></a>
-
-<h3>BOTVAC</h3>
-
-<ul>
-
-  Dieses Module steuert Neato Botvac Connected und Vorwerk Staubsaugerroboter
-
-  <br><br>
-
-  <b>Define</b>
-
-</ul>
-
-
-
-=end html_DE
-
 =cut

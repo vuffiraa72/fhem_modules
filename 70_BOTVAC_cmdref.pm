@@ -267,24 +267,4 @@
 </ul>
 
 =end html
-
-=begin html_DE
-<a name="BOTVAC"></a>
-
-<h3>BOTVAC</h3>
-
-<ul>
-
-  Dieses Module steuert Neato Botvac Connected und Vorwerk Staubsaugerroboter
-
-  <br><br>
-
-  <b>Define</b>
-
-</ul>
-
-
-
-=end html_DE
-
 =cut
