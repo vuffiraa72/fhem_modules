@@ -1,4 +1,4 @@
-# FHEM::AutoShuttersControl
+# FHEM::BRAVIA
 
 ## Used branching model
 * Master branch: Production version (copy of [fhem/fhem-mirror/blob/master/fhem/FHEM/70_BRAVIA.pm](https://github.com/fhem/fhem-mirror/blob/master/fhem/FHEM/70_BRAVIA.pm))
